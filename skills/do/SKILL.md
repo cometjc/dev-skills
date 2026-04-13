@@ -51,7 +51,7 @@ Route the user request to the right Superpowers workflow stage and enforce execu
 
 5. **Worktree failure** — If worktree setup fails: capture the failure cause, attempt one safe fix/retry. If still failing, ask AUQ for fallback: retry with adjusted parameters, switch to `executing-plans`, or pause for manual remediation.
 
-6. **Post-plan** — For each completed plan: verify → run feedback stage → merge to `main` (subagent flow) or commit on `main` (single-thread) → remove plan files. Continue queued plans automatically when convergence is unambiguous and low-risk. Pause only for ambiguous strategy, conflicts, or failed verification.
+6. **Post-plan** — For each completed plan: verify → run feedback stage → stage only plan-related files + delete the plan file → auto-commit with a Conventional Commit message (subagent flow: merge to `main`; single-thread: commit on `main`). If unrelated modified/untracked files exist, exclude them from the commit and output a one-line hint per file: path + inferred topic (e.g., `(unstaged) src/foo.ts — appears to be unrelated refactor`). Continue queued plans automatically when convergence is unambiguous and low-risk. Pause only for ambiguous strategy, conflicts, or failed verification.
 
 7. **Feedback stage** — After execution verification: review (a) current `do` skill text and (b) the execution trace. Report gaps ordered by severity with file/line evidence. Produce a remediation plan under `docs/superpowers/plans/` if fixes are needed; otherwise list residual risks.
 
