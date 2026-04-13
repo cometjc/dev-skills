@@ -31,10 +31,8 @@ Route the user request to the right Superpowers workflow stage and enforce execu
    - First try to infer `spec`/`plan` from common paths and recent files.
    - Ask only if there is no clear candidate or there are conflicting candidates.
 3. If subagents are already active in the session, continue with `subagent-driven-development` parallel flow.
-4. If a plan requires execution and no subagents are currently active, always ask AUQ to confirm executor choice, with `subagent-driven-development` recommended first.
-   - In Codex, use AUQ (`mcp__ask_user_questions__ask_user_questions`) for this confirmation.
-   - Do not fall back to plain-text confirmation unless AUQ is unavailable.
-   - Exception: when the request explicitly targets `fix-errors` queue continuation and `todo` is non-empty, skip executor AUQ and enter `subagent-driven-development` directly.
+4. If a plan requires execution and no subagents are currently active, proceed with `subagent-driven-development` by default without asking. Notify the user with: "Proceeding with subagent-driven-development. Stop me now if you need single-thread execution (executing-plans) to follow the details directly."
+   - Exception: when the request explicitly targets `fix-errors` queue continuation and `todo` is non-empty, skip notification and enter `subagent-driven-development` directly.
 5. Except single-thread `executing-plans`, enforce `using-git-worktrees` before execution if not already guaranteed.
 6. When the user provides multiple plans in one request, treat them as an ordered queue and continue automatically after each completion.
 7. After finishing each plan, automatically converge back to `main` and continue the next queued plan when the convergence path is single, low-risk, and reversible.
@@ -85,7 +83,7 @@ Run this preflight when a concrete plan path is selected:
 4. If all checks indicate no actionable delta, classify as `already_applied`.
 
 `already_applied` behavior:
-- Do not ask executor AUQ.
+- Do not send executor notification.
 - Do not create worktree.
 - Return a concise evidence-based completion report.
 
@@ -106,7 +104,7 @@ When invoked as `/do ~N` (e.g., `/do ~5`), list the most recent N tasks and thei
 
 - Note: `in_progress` tasks created in a previous session are likely **interrupted** (session ended before completion). Display them as `interrupted` if their `updated_at` predates the current session's first tool call.
 - Output as a compact table: `N | title | status | updated_at`.
-- Stop after displaying the table; do not ask executor AUQ or create worktrees.
+- Stop after displaying the table; do not send executor notification or create worktrees.
 
 ## Decision Tree
 
@@ -122,7 +120,7 @@ Request arrives
 │  │  │  └─ no  -> continue executor selection
 │  │  ├─ Subagents already active?
 │  │  │  ├─ yes -> continue subagent-driven-development (parallel allowed)
-│  │  │  └─ no  -> ask AUQ executor confirmation (recommend subagent-driven-development)
+│  │  │  └─ no  -> proceed with subagent-driven-development; notify user to stop if single-thread preferred
 │  │  └─ Worktree required?
 │  │     ├─ yes -> setup worktree
 │  │     │  ├─ success -> continue execution
@@ -306,25 +304,18 @@ Behavior:
 For each executed plan, capture:
 - Selected artifact path and why it was chosen.
 - Preflight result (`already_applied` or `action_required`) with command evidence.
-- Executor AUQ result (when applicable).
+- Executor: confirm `subagent-driven-development` proceeded (or note if user stopped for single-thread).
 - AUQ runtime state transitions when timeout/recovery occurs (`WAITING_AUQ`, `PARTIAL_PROGRESS`, `RESUME_READY`).
 - Verification commands and outcomes.
 - Feedback stage result (`findings` or `no_findings`) and report/plan path.
 
-## Confirmation Template
+## Executor Notification Template
 
-When no active subagents and a plan exists:
+When no active subagents and a plan exists, output this message before starting:
 
-`Recommendation: use subagent-driven-development for higher review quality and parallel capability.`
-`Alternative: executing-plans for single-thread, linear execution.`
-`Please confirm which one to use.`
+`Proceeding with subagent-driven-development. Stop me now if you need single-thread execution (executing-plans) to follow the details directly.`
 
-Codex AUQ form (required when available):
-- Title: `Executor`
-- Prompt: `Choose execution mode for this plan.`
-- Options:
-  - `subagent-driven-development (recommended)`
-  - `executing-plans`
+Then immediately begin execution without waiting for a response.
 
 ## Hand-off Mapping
 
@@ -333,7 +324,7 @@ Codex AUQ form (required when available):
 - Approved spec without plan -> `writing-plans`
 - Explicit `fix-errors` continuation with non-empty todo -> direct `subagent-driven-development` (ordered queue background dispatch, no executor AUQ)
 - Plan with active subagents -> `subagent-driven-development`
-- Plan without active subagents -> ask AUQ executor confirmation (recommend subagent-driven-development)
+- Plan without active subagents -> proceed with subagent-driven-development; notify user to stop if single-thread preferred
 - Independent multi-domain subproblems during execution -> `dispatching-parallel-agents`
 - Explicit single-thread preference -> `executing-plans`
 - Multiple explicit plans in one request -> queue + auto-converge-per-plan + continue next plan
