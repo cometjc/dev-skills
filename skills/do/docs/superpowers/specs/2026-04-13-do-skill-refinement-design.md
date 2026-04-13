@@ -28,8 +28,8 @@ Refine the `do` skill into a stable, concise orchestration entrypoint with deter
 4. Escalation/fallback contract (when to use AUQ)
 5. Evidence checklist (route-aware)
 
-Operational details move to references:
-- `references/auq-runtime.md`
+Operational details move to ask-me MCP tool documentation:
+- `../ask-me/scripts/ask-user-questions-mcp/skills/ask-user-questions/SKILL.md`
 - `references/worktree-recovery.md`
 
 ## Component Design
@@ -52,7 +52,7 @@ Operational details move to references:
   - Do not preempt straightforward bugfix route.
 
 ### 4) AUQ Strategy
-- Keep AUQ policy in `do`, but offload procedural details to AUQ MCP semantics and referenced runtime guide.
+- Keep AUQ policy in `do`, but offload procedural details to AUQ MCP semantics and tool documentation.
 - Main doc keeps only decision points:
   - when to ask,
   - when to continue independently,

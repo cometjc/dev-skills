@@ -24,6 +24,7 @@ Route a request to the correct Superpowers workflow and enforce execution guardr
 - verification-before-completion
 - writing-plans
 - writing-skills
+- ask-me
 
 ## Routing Priority (Deterministic)
 
@@ -64,7 +65,7 @@ If plan intent is not explicit, do not auto-promote to route 4. This prevents pr
 
 7. **Governance edits** - For direct `$do` edits that are single-target, doc-only, low-risk: auto-commit after verification; stage only required files.
 
-8. **AUQ policy** - Use AUQ for ambiguity/risk decisions and resumable blocked slices. Keep detailed runtime state behavior aligned with [AUQ Runtime](references/auq-runtime.md) and AUQ MCP return semantics.
+8. **AUQ policy** - Use AUQ for ambiguity/risk decisions and resumable blocked slices. **REQUIRED SUB-SKILL:** `ask-me` is the source of truth. `do` must follow AUQ MCP tool description and return messages (for example `session_id`, status, answered payload) instead of defining a local AUQ state machine.
 
 9. **fix-errors** - In `fix-errors` mode, new todo items from monitor stage trigger ordered background dispatch; no pause unless explicit blocking condition is hit.
 
@@ -107,5 +108,6 @@ For each execution, capture route-aware evidence:
 
 ## References
 
-- [AUQ Runtime](references/auq-runtime.md)
+- [Ask Me Skill](../ask-me/SKILL.md)
+- [Ask User Questions MCP Skill](../ask-me/scripts/ask-user-questions-mcp/skills/ask-user-questions/SKILL.md)
 - [Worktree Recovery](references/worktree-recovery.md)
