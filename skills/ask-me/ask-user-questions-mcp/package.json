@@ -1,0 +1,226 @@
+{
+  "name": "auq-mcp-server",
+  "version": "3.4.0",
+  "main": "dist/index.js",
+  "bin": {
+    "auq": "bin/auq"
+  },
+  "files": [
+    "dist",
+    "bin/auq",
+    "scripts/postinstall.cjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "workspaces": [
+    "packages/opencode-plugin"
+  ],
+  "scripts": {
+    "build": "bun run sync-plugin-schemas && bun run generate:skill && tsc && tsc -p tsconfig.opentui.json",
+    "prepare": "bun run build",
+    "postinstall": "node scripts/postinstall.cjs",
+    "release": "semantic-release",
+    "release:dry-run": "semantic-release --dry-run",
+    "server": "node dist/src/server.js",
+    "start": "bun run src/server.ts",
+    "dev": "bunx fastmcp dev src/server.ts",
+    "lint": "prettier --check . && eslint . && tsc --noEmit",
+    "sync-plugin-schemas": "bun run scripts/sync-plugin-schemas.mjs && bun run generate:skill",
+    "generate:skill": "bun run scripts/generate-skill.ts",
+    "validate:skill": "bunx skills-ref validate skills/ask-user-questions",
+    "test": "vitest run",
+    "format": "prettier --write . && eslint --fix .",
+    "build:opentui": "tsc -p tsconfig.opentui.json",
+    "test:opentui": "bun test src/tui-opentui",
+    "typecheck:all": "tsc --noEmit && tsc -p tsconfig.opentui.json --noEmit"
+  },
+  "keywords": [
+    "fastmcp",
+    "mcp",
+    "ask-user-questions",
+    "tui",
+    "terminal"
+  ],
+  "repository": {
+    "url": "git+https://github.com/paulp-o/ask-user-questions-mcp.git"
+  },
+  "author": "Paul Park",
+  "homepage": "https://github.com/paulp-o/ask-user-questions-mcp",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "description": "An MCP server that provides a tool to ask a user questions via the terminal",
+  "dependencies": {
+    "@inkjs/ui": "^2.0.0",
+    "@opentui/core": "0.1.87",
+    "@opentui/react": "0.1.87",
+    "@modelcontextprotocol/sdk": "1.17.2",
+    "ajv": "^8.17.1",
+    "@types/uuid": "^10.0.0",
+    "chalk": "^5.6.2",
+    "cli-highlight": "^2.1.11",
+    "fastmcp": "^3.23.0",
+    "gradient-string": "^3.0.0",
+    "ink": "^6.4.0",
+    "ink-gradient": "^3.0.0",
+    "ink-markdown-es": "^1.1.0",
+    "ink-text-input": "^6.0.0",
+    "marked": "^17.0.3",
+    "node-notifier": "^10.0.1",
+    "react": "^19.2.0",
+    "string-width": "^8.1.1",
+    "uuid": "^13.0.0",
+    "zod": "^4.1.13"
+  },
+  "release": {
+    "branches": [
+      "main",
+      "master"
+    ],
+    "plugins": [
+      [
+        "@semantic-release/commit-analyzer",
+        {
+          "preset": "conventionalcommits",
+          "releaseRules": [
+            {
+              "type": "feat",
+              "release": "minor"
+            },
+            {
+              "type": "fix",
+              "release": "patch"
+            },
+            {
+              "type": "perf",
+              "release": "patch"
+            },
+            {
+              "type": "refactor",
+              "release": false
+            },
+            {
+              "type": "docs",
+              "release": false
+            },
+            {
+              "type": "style",
+              "release": false
+            },
+            {
+              "type": "chore",
+              "release": false
+            },
+            {
+              "type": "ci",
+              "release": false
+            },
+            {
+              "breaking": true,
+              "release": "major"
+            }
+          ]
+        }
+      ],
+      [
+        "@semantic-release/release-notes-generator",
+        {
+          "preset": "conventionalcommits",
+          "presetConfig": {
+            "types": [
+              {
+                "type": "feat",
+                "section": "Features",
+                "hidden": false
+              },
+              {
+                "type": "fix",
+                "section": "Bug Fixes",
+                "hidden": false
+              },
+              {
+                "type": "perf",
+                "section": "Performance",
+                "hidden": false
+              },
+              {
+                "type": "refactor",
+                "section": "Code Refactoring",
+                "hidden": true
+              },
+              {
+                "type": "docs",
+                "hidden": true
+              },
+              {
+                "type": "style",
+                "hidden": true
+              },
+              {
+                "type": "chore",
+                "hidden": true
+              },
+              {
+                "type": "ci",
+                "hidden": true
+              },
+              {
+                "type": "test",
+                "hidden": true
+              }
+            ]
+          }
+        }
+      ],
+      [
+        "@semantic-release/changelog",
+        {
+          "changelogFile": "CHANGELOG.md"
+        }
+      ],
+      [
+        "@semantic-release/npm",
+        {
+          "workspaces": true
+        }
+      ],
+      [
+        "@semantic-release/github",
+        {
+          "successComment": false,
+          "failComment": false
+        }
+      ],
+      [
+        "@semantic-release/git",
+        {
+          "assets": [
+            "package.json",
+            "CHANGELOG.md"
+          ],
+          "message": "chore(release): ${nextRelease.version} [skip ci]"
+        }
+      ]
+    ]
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.26.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@tsconfig/node22": "^22.0.1",
+    "@types/node": "^22.13.0",
+    "@types/node-notifier": "^8.0.5",
+    "@types/react": "^19.2.2",
+    "conventional-changelog-conventionalcommits": "^9.1.0",
+    "eslint-config-prettier": "^10.1.3",
+    "eslint-plugin-perfectionist": "^4.12.3",
+    "ink-testing-library": "^4.0.0",
+    "prettier": "^3.5.3",
+    "semantic-release": "^24.2.3",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.32.0",
+    "vitest": "^3.1.3"
+  }
+}

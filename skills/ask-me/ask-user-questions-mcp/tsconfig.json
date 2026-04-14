@@ -1,0 +1,16 @@
+{
+  "extends": "@tsconfig/node22/tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "jsx": "react",
+    "resolveJsonModule": true
+  },
+  "include": [
+    "src",
+    "bin"
+  ],
+  "exclude": [
+    "opensrc",
+    "src/tui-opentui"
+  ]
+}
