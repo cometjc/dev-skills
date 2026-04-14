@@ -71,6 +71,9 @@ If plan intent is not explicit, do not auto-promote to route 4. This prevents pr
 7. **Governance edits** - For direct `$do` edits that are single-target, doc-only, low-risk: auto-commit after verification; stage only required files.
 
 8. **AUQ policy** - Use AUQ for ambiguity/risk decisions and resumable blocked slices. **REQUIRED SUB-SKILL:** `ask-me` is the primary usage definition (question format/order/templates + runtime transitions). In `do`, only decide **when** to invoke AUQ and then execute exactly per `ask-me` + AUQ MCP return payload (`session_id`, status, answered payload). Default to blocking ask (`nonBlocking: false`) unless there are independent slices that can continue without the decision.
+  - Trigger rule: ask AUQ when a **key decision is not finalized** and cannot be uniquely derived from current rules/artifacts/context.
+  - Mandatory AUQ gate before execution when that unresolved decision also carries high-cost side effects (destructive changes, broad mutations, or expensive rollback).
+  - In these cases, `do` must not proceed with execution until AUQ returns an explicit decision.
 
 9. **fix-errors** - In `fix-errors` mode, new todo items from monitor stage trigger ordered background dispatch; no pause unless explicit blocking condition is hit.
 
@@ -114,6 +117,8 @@ Validate routing behavior with these checks:
 - existing plan-execution intent + sequential tasks -> `executing-plans`
 - brainstorming user-review handoff -> includes "newly specified items since Q&A" summary, not path-only prompt
 - governance AUQ flow -> follows `ask-me` question-order contract and templates
+- AUQ trigger -> unresolved key decision (not finalized) is queried before execution
+- AUQ mandatory gate -> unresolved high-cost key decision blocks execution until explicit AUQ answer
 
 ## Execution Evidence Checklist
 
