@@ -70,11 +70,22 @@ If plan intent is not explicit, do not auto-promote to route 4. This prevents pr
 
 7. **Governance edits** - For direct `$do` edits that are single-target, doc-only, low-risk: auto-commit after verification; stage only required files.
 
-8. **AUQ policy** - Use AUQ for ambiguity/risk decisions and resumable blocked slices. **REQUIRED SUB-SKILL:** `ask-me` is the source of truth. `do` must follow AUQ MCP tool description and return messages (for example `session_id`, status, answered payload) instead of defining a local AUQ state machine.
+8. **AUQ policy** - Use AUQ for ambiguity/risk decisions and resumable blocked slices. **REQUIRED SUB-SKILL:** `ask-me` is the primary usage definition (question format/order/templates + runtime transitions). In `do`, only decide **when** to invoke AUQ and then execute exactly per `ask-me` + AUQ MCP return payload (`session_id`, status, answered payload). Default to blocking ask (`nonBlocking: false`) unless there are independent slices that can continue without the decision.
 
 9. **fix-errors** - In `fix-errors` mode, new todo items from monitor stage trigger ordered background dispatch; no pause unless explicit blocking condition is hit.
 
 10. **Planning trigger policy** - Planning is required only for new features or non-obvious bugfixes with meaningful trade-offs. Straightforward fixes bypass plan/spec and go directly through `systematic-debugging`.
+
+11. **Spec review prompt quality (brainstorming gate)** - During the `brainstorming` -> `user review` handoff, do not send path-only prompts such as "spec is in `<path>`". The review request MUST include:
+- a concise summary of spec definitions that were **not explicitly resolved during earlier questioning**
+- why those definitions matter for implementation risk/scope
+- the spec path as supporting reference only (not the primary message)
+Recommended structure:
+- `Newly specified items since Q&A: ...`
+- `Impact if changed now: ...`
+- `Spec reference: <path>`
+
+12. **AUQ governance question ordering** - For rule/process/doc governance updates, follow `ask-me` question-order contract (target path selection first, then content details). Do not restate template details in `do`; inherit them from `ask-me`.
 
 ## Task Status Listing (`~N`)
 
@@ -101,6 +112,8 @@ Validate routing behavior with these checks:
 - `fix-errors` with non-empty todo -> direct `subagent-driven-development`
 - existing plan-execution intent + independent tasks -> `subagent-driven-development`
 - existing plan-execution intent + sequential tasks -> `executing-plans`
+- brainstorming user-review handoff -> includes "newly specified items since Q&A" summary, not path-only prompt
+- governance AUQ flow -> follows `ask-me` question-order contract and templates
 
 ## Execution Evidence Checklist
 
