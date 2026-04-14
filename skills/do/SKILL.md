@@ -64,6 +64,9 @@ If plan intent is not explicit, do not auto-promote to route 4. This prevents pr
 - `subagent-driven-development` start message: _"Proceeding with subagent-driven-development. Stop me now if you need single-thread execution (executing-plans) to follow the details directly."_
 
 4. **Worktree policy** - Require `using-git-worktrees` before concurrent execution routes (`subagent-driven-development` and `dispatching-parallel-agents`). Single-thread `executing-plans` may run without worktree when risk is low. For detailed failure diagnosis and remediation, follow [Worktree Recovery](references/worktree-recovery.md).
+  - **Subagent git-context hard gate**: when execution is assigned to a specific worktree branch, each subagent MUST run `scripts/ensure_git_context.sh --branch <expected_branch> --toplevel <expected_worktree_root>` before first write and again before commit.
+  - If the check fails, subagent MUST stop and report `BLOCKED`; continuing writes/commit in any other branch/worktree is forbidden.
+  - Controller MUST independently verify after subagent completion: `git -C <worktree> rev-parse --abbrev-ref HEAD` and `git branch --contains <commit_sha>`; reject reviewer handoff if commit is found on non-expected branch.
 
 5. **Post-plan** - For each completed plan: verify -> feedback stage -> stage only plan-related files + delete plan file -> auto-commit with Conventional Commit message. Exclude unrelated files and emit one-line hints for each excluded file.
 
@@ -71,7 +74,7 @@ If plan intent is not explicit, do not auto-promote to route 4. This prevents pr
 
 7. **Governance edits** - For direct `$do` edits that are single-target, doc-only, low-risk: auto-commit after verification; stage only required files.
 
-8. **AUQ policy** - Use AUQ for ambiguity/risk decisions and resumable blocked slices. **REQUIRED SUB-SKILL:** `ask-me` is the primary usage definition (question format/order/templates + runtime transitions). In `do`, only decide **when** to invoke AUQ and then execute exactly per `ask-me` + AUQ MCP return payload (`session_id`, status, answered payload). Default to non-blocking ask (`nonBlocking: true`); switch to blocking only when the critical path is fully blocked.
+8. **AUQ policy** - Use AUQ for ambiguity/risk decisions and resumable blocked slices. **REQUIRED SUB-SKILL:** `ask-me` is the primary usage definition (question format/order/templates + runtime transitions). In `do`, only decide **when** to invoke AUQ and then execute exactly per `ask-me` + AUQ MCP return payload (`session_id`, status, answered payload). **First AUQ ask MUST use blocking (`nonBlocking: false`) and wait for answer directly; do not send with `nonBlocking: true` and then immediately poll.**
   - **Hard gate:** if execution state has pending user feedback, `do` MUST call AUQ tooling before any execution route. Plain-chat follow-up is forbidden in this state.
   - **Plan-complete execution-choice gate:** when a plan is complete/saved and the next step is choosing execution mode (for example `Subagent-Driven` vs `Inline Execution`), `do` MUST ask via AUQ tooling; do not ask this choice in plain chat.
   - Pending-feedback continuity:
@@ -83,7 +86,9 @@ If plan intent is not explicit, do not auto-promote to route 4. This prevents pr
   - Mandatory AUQ gate before execution when that unresolved decision also carries high-cost side effects (destructive changes, broad mutations, or expensive rollback).
   - In these cases, `do` must not proceed with execution until AUQ returns an explicit decision.
   - In route 5 (`brainstorming` + `grill-me`) under `do`, unresolved design decisions MUST be asked through AUQ tooling. Do not use plain chat questions as a substitute for AUQ when the decision is key to scope, behavior, or risk.
+  - **Route 5 approach-selection gate:** when presenting multiple viable approaches (for example A/B/C with recommendation), the final approach choice MUST be asked via AUQ tooling, not plain chat, even if the recommendation is clear.
   - AUQ continuity rule: if a question batch is open, fetch its answer state via AUQ response payload before asking the next decision question.
+  - **No immediate-poll anti-pattern:** after creating a new AUQ question batch, do not call `get_answered_questions(blocking: false)` immediately just to observe `pending`; first ask should already be blocking and return the answer payload directly.
 
 9. **fix-errors** - In `fix-errors` mode, new todo items from monitor stage trigger ordered background dispatch; no pause unless explicit blocking condition is hit.
 
@@ -126,13 +131,17 @@ Validate routing behavior with these checks:
 - `fix-errors` with non-empty todo -> direct `subagent-driven-development`
 - existing plan-execution intent + independent tasks -> `subagent-driven-development`
 - existing plan-execution intent + sequential tasks -> `executing-plans`
+- subagent on worktree branch -> `ensure_git_context.sh` passes before first write and before commit
+- subagent context mismatch -> task reports `BLOCKED` and does not write/commit
 - brainstorming user-review handoff -> includes "newly specified items since Q&A" summary, not path-only prompt
 - governance AUQ flow -> follows `ask-me` question-order contract and templates
 - AUQ trigger -> unresolved key decision (not finalized) is queried before execution
 - AUQ mandatory gate -> unresolved high-cost key decision blocks execution until explicit AUQ answer
 - AUQ pending-feedback gate -> any unresolved feedback state must be polled/handled via AUQ before execution
+- first AUQ ask -> uses blocking mode directly (no immediate non-blocking submit+poll sequence)
 - plan-complete execution choice -> `Subagent-Driven` vs `Inline Execution` is asked via AUQ (no plain chat choice prompt)
 - route 5 Q&A -> uses AUQ tool for unresolved key decisions (no plain-chat substitution)
+- route 5 approach choice -> A/B/C recommendation selection is asked via AUQ (no plain-chat final selection)
 
 ## Execution Evidence Checklist
 
