@@ -74,6 +74,8 @@ If plan intent is not explicit, do not auto-promote to route 4. This prevents pr
   - Trigger rule: ask AUQ when a **key decision is not finalized** and cannot be uniquely derived from current rules/artifacts/context.
   - Mandatory AUQ gate before execution when that unresolved decision also carries high-cost side effects (destructive changes, broad mutations, or expensive rollback).
   - In these cases, `do` must not proceed with execution until AUQ returns an explicit decision.
+  - In route 5 (`brainstorming` + `grill-me`) under `do`, unresolved design decisions MUST be asked through AUQ tooling. Do not use plain chat questions as a substitute for AUQ when the decision is key to scope, behavior, or risk.
+  - AUQ continuity rule: if a question batch is open, fetch its answer state via AUQ response payload before asking the next decision question.
 
 9. **fix-errors** - In `fix-errors` mode, new todo items from monitor stage trigger ordered background dispatch; no pause unless explicit blocking condition is hit.
 
@@ -119,6 +121,7 @@ Validate routing behavior with these checks:
 - governance AUQ flow -> follows `ask-me` question-order contract and templates
 - AUQ trigger -> unresolved key decision (not finalized) is queried before execution
 - AUQ mandatory gate -> unresolved high-cost key decision blocks execution until explicit AUQ answer
+- route 5 Q&A -> uses AUQ tool for unresolved key decisions (no plain-chat substitution)
 
 ## Execution Evidence Checklist
 
