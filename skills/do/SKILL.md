@@ -115,5 +115,4 @@ For each execution, capture route-aware evidence:
 ## References
 
 - [Ask Me Skill](../ask-me/SKILL.md)
-- [Ask User Questions MCP Skill](../ask-me/scripts/ask-user-questions-mcp/skills/ask-user-questions/SKILL.md)
 - [Worktree Recovery](references/worktree-recovery.md)

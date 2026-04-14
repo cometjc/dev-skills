@@ -5,7 +5,7 @@ description: Use when execution needs user clarification through ask_user_questi
 
 # Ask Me
 
-Coordinate AUQ (ask-user-questions MCP) interactions for orchestration flows.
+Coordinate AUQ (`ask-user-questions` MCP) interactions for orchestration flows.
 
 ## When to Apply
 
@@ -25,13 +25,29 @@ Common triggers:
 4. Resume blocked slices when answers are available.
 5. Treat MCP tool descriptions and return payloads as runtime source of truth.
 
+## AUQ Question Rules
+
+- Ask via MCP tools: `ask_user_questions` and `get_answered_questions`.
+- Always provide 1-5 questions.
+- Each question must include:
+  - `title` (max 12 chars)
+  - `prompt` (full question text ending with `?`)
+  - `options` (2-5 choices, no manual `Other`)
+  - `multiSelect` (`true`/`false`)
+- Put the recommended option first and append `(Recommended)` in the label.
+- Do not ask meta-process confirmations like "Is my plan ready?" or "Should I proceed?".
+
+## Return-Message Guided Flow
+
+1. Call `ask_user_questions` with `nonBlocking: true` for resumable flows.
+2. Persist returned `session_id` with blocked work slices.
+3. Poll with `get_answered_questions(session_id, blocking: false)` on normal execution triggers.
+4. Branch by returned status:
+  - `pending`: continue independent slices.
+  - `answered`: re-attach blocked slices and resume.
+  - timeout/no answer: keep partial progress and retry later.
+5. Use `blocking: true` only when the next critical-path step is fully blocked on user answers.
+
 ## Do Integration
 
-`do` should not define its own AUQ state machine. `do` should invoke AUQ and follow tool return messages.
-
-- MCP tool spec and behavior:
-  - [`scripts/ask-user-questions-mcp/skills/ask-user-questions/SKILL.md`](scripts/ask-user-questions-mcp/skills/ask-user-questions/SKILL.md)
-- `do` keeps only:
-  - when AUQ must be used
-  - which slices are blocked vs independent
-  - that state transitions are driven by AUQ return fields (`session_id`, status, answered payload)
+`do` must not define its own AUQ state machine. It should invoke AUQ tools and follow return fields (`session_id`, status, answered payload).
