@@ -664,10 +664,7 @@ On macOS, both should use: `~/Library/Application Support/auq/sessions`
 ### Development Commands
 
 ```bash
-# Regenerate the skill from source
-bun run generate:skill
-
-# Validate skill structure and content
+# Validate static skill structure and content
 bun run validate:skill
 ```
 
