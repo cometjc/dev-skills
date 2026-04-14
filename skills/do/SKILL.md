@@ -30,6 +30,7 @@ Route a request to the correct Superpowers workflow and enforce execution guardr
 
 Apply the first matching rule and stop.
 
+0. Pending user feedback (open AUQ session or unresolved feedback state) -> AUQ continuity gate first (`get_answered_questions`), then route only after explicit status outcome.
 1. `/do ~N` -> Task Status Listing only.
 2. `fix-errors` with non-empty todo -> `subagent-driven-development` (direct, no notify).
 3. Explicit single-thread preference -> `executing-plans`.
@@ -70,7 +71,13 @@ If plan intent is not explicit, do not auto-promote to route 4. This prevents pr
 
 7. **Governance edits** - For direct `$do` edits that are single-target, doc-only, low-risk: auto-commit after verification; stage only required files.
 
-8. **AUQ policy** - Use AUQ for ambiguity/risk decisions and resumable blocked slices. **REQUIRED SUB-SKILL:** `ask-me` is the primary usage definition (question format/order/templates + runtime transitions). In `do`, only decide **when** to invoke AUQ and then execute exactly per `ask-me` + AUQ MCP return payload (`session_id`, status, answered payload). Default to blocking ask (`nonBlocking: false`) unless there are independent slices that can continue without the decision.
+8. **AUQ policy** - Use AUQ for ambiguity/risk decisions and resumable blocked slices. **REQUIRED SUB-SKILL:** `ask-me` is the primary usage definition (question format/order/templates + runtime transitions). In `do`, only decide **when** to invoke AUQ and then execute exactly per `ask-me` + AUQ MCP return payload (`session_id`, status, answered payload). Default to non-blocking ask (`nonBlocking: true`); switch to blocking only when the critical path is fully blocked.
+  - **Hard gate:** if execution state has pending user feedback, `do` MUST call AUQ tooling before any execution route. Plain-chat follow-up is forbidden in this state.
+  - Pending-feedback continuity:
+    - call `get_answered_questions(session_id, blocking: false)` first
+    - `answered` -> apply answer payload, clear pending state, continue routing
+    - `pending` with independent slices -> continue only independent slices; keep blocked slices resumable
+    - `pending` with critical-path block -> wait via AUQ (`blocking: true`) before continuing
   - Trigger rule: ask AUQ when a **key decision is not finalized** and cannot be uniquely derived from current rules/artifacts/context.
   - Mandatory AUQ gate before execution when that unresolved decision also carries high-cost side effects (destructive changes, broad mutations, or expensive rollback).
   - In these cases, `do` must not proceed with execution until AUQ returns an explicit decision.
@@ -111,6 +118,7 @@ Output: compact table `N | title | status | updated_at`. Stop; do not route to e
 
 Validate routing behavior with these checks:
 - `/do ~N` -> lists session-task status only
+- pending user feedback -> AUQ continuity gate runs before route selection/execution
 - straightforward bugfix/test-fix -> `systematic-debugging` direct execution
 - non-obvious feature/bugfix -> `brainstorming` + `grill-me` first
 - explicit single-thread request -> `executing-plans`
@@ -121,6 +129,7 @@ Validate routing behavior with these checks:
 - governance AUQ flow -> follows `ask-me` question-order contract and templates
 - AUQ trigger -> unresolved key decision (not finalized) is queried before execution
 - AUQ mandatory gate -> unresolved high-cost key decision blocks execution until explicit AUQ answer
+- AUQ pending-feedback gate -> any unresolved feedback state must be polled/handled via AUQ before execution
 - route 5 Q&A -> uses AUQ tool for unresolved key decisions (no plain-chat substitution)
 
 ## Execution Evidence Checklist
