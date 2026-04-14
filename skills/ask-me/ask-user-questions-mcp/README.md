@@ -290,6 +290,7 @@ It is recommended to **disable** the built-in questioning tool in your harness (
 | `Esc`    | Reject        | Reject the whole question set and optionally explain why to the AI |
 | `Ctrl+T` | Theme         | Cycle through available color themes                               |
 | `[`/`]`  | Sessions      | Switch to previous/next session (OpenTUI: also click session dots) |
+| `T`      | Telegram      | Toggle Telegram sync on/off; launches setup wizard if not configured |
 
 **Mouse Support (OpenTUI renderer only):**
 
@@ -317,6 +318,7 @@ It is recommended to **disable** the built-in questioning tool in your harness (
 | `1-9`    | Jump directly to session by number                                 |
 | `[/]`    | Navigate between sessions                                          |
 | `U`      | Open update overlay (when update available)                        |
+| `T`      | Toggle Telegram sync on/off (setup wizard if not configured)       |
 
 </details>
 <details>
@@ -419,10 +421,41 @@ List commands (`sessions list`, `history`, `fetch-answers`) support:
 | -------------------- | ------------------------------------------------ |
 | `AUQ_RENDERER`       | Override renderer (`"ink"` or `"opentui"`)          |
 | `AUQ_SESSION_DIR`    | Custom session storage directory                 |
+| `AUQ_TELEGRAM_BOT_TOKEN` | Bot token read via `telegram.tokenEnvKey`      |
+| `AUQ_TELEGRAM_WEBHOOK_SECRET` | Optional webhook secret token header check |
 | `XDG_CONFIG_HOME`    | Custom config directory (default: `~/.config`)   |
 | `NO_UPDATE_NOTIFIER` | Set to `"1"` to disable update checks             |
 
 </details>
+
+### Telegram Sync (Experimental)
+
+You can enable Telegram question delivery + button-based answer submission:
+
+```bash
+# Option A: provide webhook URL directly
+export AUQ_TELEGRAM_BOT_TOKEN="<your-bot-token>"
+auq config telegram init --webhook-url "https://<your-funnel-domain>/webhook"
+
+# Option B: auto-setup via Tailscale Funnel (requires tailscale running)
+auq config telegram init --funnel auto
+
+# Option C: skip funnel, pair-only (no webhook; Telegram answers not delivered)
+auq config telegram init --funnel off
+```
+
+The `--funnel auto` flag runs `tailscale funnel` automatically and wires the resulting HTTPS URL as the webhook. If Tailscale is unavailable, AUQ falls back to pairing-only mode and prints remediation instructions.
+
+The token is read from the `AUQ_TELEGRAM_BOT_TOKEN` environment variable. If not set, AUQ checks `.env` in the current directory, then prompts interactively. The entered token is written back to `.env` for future runs.
+
+The init flow prints:
+- a bot link (`https://t.me/<bot>?start=pair_<id>`)
+- a one-time PIN
+
+Open the bot and send the PIN to bind `allowedChatId`.  
+If a chat is already bound, AUQ rejects overwrite by default; use `auq config telegram rebind`.
+
+**TUI quick-toggle:** Press `T` in the TUI to enable/disable Telegram sync at any time. If Telegram is not yet configured, `T` opens the setup wizard. When you **enable** Telegram, AUQ automatically reconciles active sessions — adding new messages, editing updated ones, and removing stale entries — so your Telegram chat catches up instantly.
 
 
 ### Stale Session Detection

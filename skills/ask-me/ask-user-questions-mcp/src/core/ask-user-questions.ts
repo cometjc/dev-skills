@@ -113,8 +113,7 @@ export const createAskUserQuestionsCore = (
       resolvedSessionId = match;
     }
 
-    const sessionStatus =
-      await sessionManager.getSessionStatusWithTimeout(resolvedSessionId);
+    const sessionStatus = await sessionManager.getSessionStatus(resolvedSessionId);
     if (!sessionStatus) {
       throw new Error(`Session not found: ${sessionId}`);
     }
