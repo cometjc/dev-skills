@@ -73,6 +73,7 @@ If plan intent is not explicit, do not auto-promote to route 4. This prevents pr
 
 8. **AUQ policy** - Use AUQ for ambiguity/risk decisions and resumable blocked slices. **REQUIRED SUB-SKILL:** `ask-me` is the primary usage definition (question format/order/templates + runtime transitions). In `do`, only decide **when** to invoke AUQ and then execute exactly per `ask-me` + AUQ MCP return payload (`session_id`, status, answered payload). Default to non-blocking ask (`nonBlocking: true`); switch to blocking only when the critical path is fully blocked.
   - **Hard gate:** if execution state has pending user feedback, `do` MUST call AUQ tooling before any execution route. Plain-chat follow-up is forbidden in this state.
+  - **Plan-complete execution-choice gate:** when a plan is complete/saved and the next step is choosing execution mode (for example `Subagent-Driven` vs `Inline Execution`), `do` MUST ask via AUQ tooling; do not ask this choice in plain chat.
   - Pending-feedback continuity:
     - call `get_answered_questions(session_id, blocking: false)` first
     - `answered` -> apply answer payload, clear pending state, continue routing
@@ -130,6 +131,7 @@ Validate routing behavior with these checks:
 - AUQ trigger -> unresolved key decision (not finalized) is queried before execution
 - AUQ mandatory gate -> unresolved high-cost key decision blocks execution until explicit AUQ answer
 - AUQ pending-feedback gate -> any unresolved feedback state must be polled/handled via AUQ before execution
+- plan-complete execution choice -> `Subagent-Driven` vs `Inline Execution` is asked via AUQ (no plain chat choice prompt)
 - route 5 Q&A -> uses AUQ tool for unresolved key decisions (no plain-chat substitution)
 
 ## Execution Evidence Checklist
