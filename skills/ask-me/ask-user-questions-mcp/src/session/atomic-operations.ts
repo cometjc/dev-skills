@@ -5,7 +5,6 @@
 
 import { constants, copyFile, rename } from "fs";
 import { promises as fs } from "fs";
-import { tmpdir } from "os";
 import { dirname, join } from "path";
 
 import { fileExists } from "./utils.js";
@@ -71,7 +70,7 @@ const DEFAULT_WRITE_OPTIONS: Required<AtomicWriteOptions> = {
   maxRetries: 3,
   mode: 0o600,
   retryDelay: 100,
-  tmpDir: tmpdir(),
+  tmpDir: "",
 };
 
 const DEFAULT_READ_OPTIONS: Required<AtomicReadOptions> = {
@@ -206,7 +205,8 @@ export async function atomicWriteFile(
   options: AtomicWriteOptions = {},
 ): Promise<void> {
   const opts = { ...DEFAULT_WRITE_OPTIONS, ...options };
-  const tempPath = generateTempPath(filePath, opts.tmpDir);
+  // Keep temp and destination on the same filesystem to preserve atomic rename().
+  const tempPath = generateTempPath(filePath, opts.tmpDir || dirname(filePath));
 
   try {
     // Acquire file lock
@@ -359,13 +359,11 @@ function basename(path: string): string {
 /**
  * Generate a unique temporary file path
  */
-function generateTempPath(originalPath: string, _tmpDir: string): string {
+function generateTempPath(originalPath: string, tmpDir: string): string {
   const timestamp = Date.now();
   const random = Math.random().toString(36).substring(2);
   const filename = `${timestamp}-${random}-${basename(originalPath)}.tmp`;
-  // Keep temp file on the same filesystem as target to avoid EXDEV on rename.
-  const safeTmpDir = dirname(originalPath);
-  return join(safeTmpDir, filename);
+  return join(tmpDir, filename);
 }
 
 /**
