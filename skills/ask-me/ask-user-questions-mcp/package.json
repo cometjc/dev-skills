@@ -16,7 +16,7 @@
     "packages/opencode-plugin"
   ],
   "scripts": {
-    "build": "bun run sync-plugin-schemas && bun run generate:skill && tsc && tsc -p tsconfig.opentui.json",
+    "build": "bun run sync-plugin-schemas && tsc && tsc -p tsconfig.opentui.json",
     "prepare": "bun run build",
     "postinstall": "node scripts/postinstall.cjs",
     "release": "semantic-release",
@@ -25,8 +25,7 @@
     "start": "bun run src/server.ts",
     "dev": "bunx fastmcp dev src/server.ts",
     "lint": "prettier --check . && eslint . && tsc --noEmit",
-    "sync-plugin-schemas": "bun run scripts/sync-plugin-schemas.mjs && bun run generate:skill",
-    "generate:skill": "bun run scripts/generate-skill.ts",
+    "sync-plugin-schemas": "bun run scripts/sync-plugin-schemas.mjs",
     "validate:skill": "bunx skills-ref validate skills/ask-user-questions",
     "test": "vitest run",
     "format": "prettier --write . && eslint --fix .",
