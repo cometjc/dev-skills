@@ -29,7 +29,7 @@ Refine the `do` skill into a stable, concise orchestration entrypoint with deter
 5. Evidence checklist (route-aware)
 
 Operational details move to ask-me MCP tool documentation:
-- `../ask-me/scripts/ask-user-questions-mcp/skills/ask-user-questions/SKILL.md`
+- `../ask-me/SKILL.md`
 - `references/worktree-recovery.md`
 
 ## Component Design
