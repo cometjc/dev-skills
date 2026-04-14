@@ -80,11 +80,11 @@ If plan intent is not explicit, do not auto-promote to route 4. This prevents pr
 
 When invoked as `/do ~N` (for example, `/do ~5`), list the most recent N tasks. Default N = 10.
 
-Use `TaskList`; sort by `updated_at` descending; take top N. `in_progress` tasks from a previous session display as `interrupted`.
+Use tasks performed in the current session as the source of truth; sort by `updated_at` descending; take top N. `in_progress` tasks from a previous session display as `interrupted`.
 
 Output: compact table `N | title | status | updated_at`. Stop; do not route to execution.
 
-| TaskList status | Display label |
+| Session status | Display label |
 |---|---|
 | `in_progress` | ongoing (or `interrupted` if from prior session) |
 | `completed` | done |
@@ -94,7 +94,7 @@ Output: compact table `N | title | status | updated_at`. Stop; do not route to e
 ## Validation Matrix (Minimum)
 
 Validate routing behavior with these checks:
-- `/do ~N` -> lists tasks only
+- `/do ~N` -> lists session-task status only
 - straightforward bugfix/test-fix -> `systematic-debugging` direct execution
 - non-obvious feature/bugfix -> `brainstorming` + `grill-me` first
 - explicit single-thread request -> `executing-plans`
