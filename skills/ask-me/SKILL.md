@@ -28,7 +28,7 @@ Common triggers:
 
 ## Core Contract
 
-1. Prefer non-blocking AUQ for orchestration workflows.
+1. Default to blocking AUQ when the next step is on the critical path and no independent slice can continue.
 2. Persist session IDs and blocked slices for resumable execution.
 3. Poll answered state on execution triggers.
 4. Resume blocked slices when answers are available.
@@ -38,6 +38,8 @@ Common triggers:
 
 - Ask via MCP tools: `ask_user_questions` and `get_answered_questions`.
 - Always provide 1-5 questions.
+- For governance/doc-rule update requests, the **first AUQ question** must ask for selectable target path(s) before asking content details.
+- Target-path question must provide 2-5 concrete path options (recommended option first), then continue with follow-up AUQ on rule content.
 - Each question must include:
   - `title` (max 12 chars)
   - `prompt` (full question text ending with `?`)
@@ -46,16 +48,66 @@ Common triggers:
 - Put the recommended option first and append `(Recommended)` in the label.
 - Do not ask meta-process confirmations like "Is my plan ready?" or "Should I proceed?".
 
+## Standard AUQ Prompt Templates
+
+Use these templates as defaults and only customize labels/descriptions to the task.
+
+1. Governance/rule update (path-first):
+```json
+{
+  "nonBlocking": false,
+  "questions": [
+    {
+      "title": "Target Path",
+      "multiSelect": false,
+      "prompt": "Which target path should we update first?",
+      "options": [
+        {"label": "Path A (Recommended)", "description": "Primary governance scope."},
+        {"label": "Path B", "description": "Project-level override scope."},
+        {"label": "Both paths", "description": "Apply consistent rule in both files."}
+      ]
+    }
+  ]
+}
+```
+
+2. Follow-up content decision (after target path is answered):
+```json
+{
+  "nonBlocking": false,
+  "questions": [
+    {
+      "title": "Rule Change",
+      "multiSelect": false,
+      "prompt": "What rule behavior should be enforced?",
+      "options": [
+        {"label": "Strict mode (Recommended)", "description": "Enforce on every matching case."},
+        {"label": "Guarded mode", "description": "Enforce only on high-risk or ambiguous cases."}
+      ]
+    }
+  ]
+}
+```
+
+3. Fetch answers:
+```json
+{
+  "blocking": true,
+  "session_id": "<session_id>"
+}
+```
+
 ## Return-Message Guided Flow
 
-1. Call `ask_user_questions` with `nonBlocking: true` for resumable flows.
-2. Persist returned `session_id` with blocked work slices.
-3. Poll with `get_answered_questions(session_id, blocking: false)` on normal execution triggers.
-4. Branch by returned status:
+1. If no independent work can continue without the answer, call `ask_user_questions` with `nonBlocking: false` (blocking).
+2. Use `nonBlocking: true` only when the decision can be deferred and independent slices can continue.
+3. For non-blocking flows, persist returned `session_id` with blocked work slices.
+4. Poll with `get_answered_questions(session_id, blocking: false)` on normal execution triggers.
+5. Branch by returned status:
   - `pending`: continue independent slices.
   - `answered`: re-attach blocked slices and resume.
   - timeout/no answer: keep partial progress and retry later.
-5. Use `blocking: true` only when the next critical-path step is fully blocked on user answers.
+6. Use `get_answered_questions(..., blocking: true)` only when waiting is explicitly required at that point.
 
 ## Execution Guardrails
 
