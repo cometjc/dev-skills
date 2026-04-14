@@ -9,22 +9,30 @@ Route a request to the correct Superpowers workflow and enforce execution guardr
 
 ## Dependencies
 
-- brainstorming
-- dispatching-parallel-agents
-- executing-plans
-- finishing-a-development-branch
-- grill-me
-- receiving-code-review
-- requesting-code-review
-- subagent-driven-development
-- systematic-debugging
-- test-driven-development
-- using-git-worktrees
+### Routing and Discovery
+
 - using-superpowers
-- verification-before-completion
-- writing-plans
-- writing-skills
 - ask-me
+- brainstorming
+- grill-me
+- systematic-debugging
+- dispatching-parallel-agents
+
+### Planning and Execution
+
+- writing-plans
+- subagent-driven-development
+- executing-plans
+- using-git-worktrees
+
+### Verification and Quality Gates
+
+- verification-before-completion
+- test-driven-development
+- requesting-code-review
+- receiving-code-review
+- finishing-a-development-branch
+- writing-skills
 
 ## Numbered Workflow (Fast-Reference)
 
@@ -33,6 +41,21 @@ Use this indexed flow for routing, fast-forward, and progress references (for ex
 ### A. Entry and Routing
 
 Apply the first matching route and stop.
+
+#### Routing Decision Table
+
+| Condition | Hit | Next |
+|---|---|---|
+| Pending AUQ feedback exists | (1) | Run AUQ continuity gate before any route |
+| `/do ~N` | (3.a) | Task status listing only; stop |
+| `fix-errors` and todo non-empty | (3.b) | `subagent-driven-development` |
+| Explicit single-thread preference | (3.c) | `executing-plans` |
+| Existing plan-execution intent with independent tasks | (3.d) | `subagent-driven-development` |
+| Existing plan-execution intent with sequential/tightly coupled tasks | (3.d) | `executing-plans` |
+| New feature or non-obvious bugfix | (3.e) | Spec clarification path (B) |
+| Straightforward bugfix/test-fix | (3.f) | `systematic-debugging` direct |
+| Multi-domain independent subproblems (>=2) | (3.g) | `dispatching-parallel-agents` |
+| Unclear scope/new behavior fallback | (3.h) | `brainstorming` |
 
 **(1) AUQ continuity gate first**
 - If pending user feedback exists (open AUQ session or unresolved feedback state), call `get_answered_questions` before any execution route.
@@ -121,14 +144,20 @@ Apply the first matching route and stop.
 - Create remediation plan only when findings require follow-up work.
 
 **(15) Post-plan completion**
-- For each completed plan: verify -> feedback stage -> integration-to-`master` gate -> stage only plan-related files -> delete plan file -> auto-commit (Conventional Commit).
+- For each completed plan: verify -> feedback stage -> integration-to-base-branch gate -> stage only plan-related files -> delete plan file -> auto-commit (Conventional Commit).
 - Exclude unrelated files and emit one-line hint per excluded file.
-- Plan cleanup is forbidden before implementation commits are integrated into `master` (merge or cherry-pick).
-- "Plan finish" means implementation is committed on `master`; feature-branch-only commits are `implemented_not_integrated`, not finished.
+- Resolve base branch by auto-detecting `origin/HEAD` (fallback: repository default branch policy).
+- Plan cleanup is forbidden before implementation commits are integrated into base branch (merge or cherry-pick), unless explicit `defer-integration` is set.
+- `defer-integration` exception branch:
+  - mark plan status as `implemented_not_integrated`
+  - keep plan file (no cleanup)
+  - do not run post-plan auto-commit/cleanup
+  - report integration remains pending
+- "Plan finish" means implementation commits are reachable from base branch; feature-branch-only commits are `implemented_not_integrated`, not finished.
 - Required evidence before cleanup:
-  - `git rev-parse --abbrev-ref HEAD` is `master`
-  - implementation commit SHA(s) are reachable from `master` (`git branch --contains <sha>` includes `master`)
-  - post-integration verification passes on `master`
+  - detected base branch name
+  - implementation commit SHA(s) are reachable from base branch (`git branch --contains <sha>` includes base branch)
+  - post-integration verification passes on base branch
 
 **(16) Governance doc-only edits**
 - For direct `$do` edits that are single-target, doc-only, low-risk:
@@ -139,16 +168,13 @@ Apply the first matching route and stop.
 
 `do` decides **when** to invoke AUQ. `ask-me` defines **how** to ask.
 
-- First AUQ ask MUST be blocking (`nonBlocking: false`) when on critical path.
-- Do not submit non-blocking then immediately poll.
-- Pending-feedback continuity:
-  - call `get_answered_questions(session_id, blocking: false)` first
-  - `answered` -> apply payload, clear pending state, continue routing
-  - `pending` + independent slices -> continue independent slices only
-  - `pending` + critical-path block -> wait with `blocking: true`
-- Ask AUQ when key decision is not finalized and cannot be derived from context.
+`do` keeps only AUQ trigger conditions and hard gates. Question wording, options, batching, and templates are fully delegated to `ask-me`.
+
+- Trigger AUQ when a key decision is not finalized and cannot be derived from context.
 - Mandatory AUQ gate before execution when unresolved decision carries high-cost side effects.
-- For governance/rule/process doc updates, follow `ask-me` ordering contract (target path first, then content decision).
+- Hard gate: pending feedback must be resolved through AUQ tooling before route execution.
+- Plan-complete execution-choice gate must use AUQ tooling (not plain chat).
+- Governance/rule/process doc updates must use `ask-me` ordering contract.
 
 ## Planning Trigger Policy
 
@@ -186,6 +212,7 @@ Validate routing behavior with these checks:
 - (3.b) `fix-errors` with non-empty todo -> direct `subagent-driven-development`
 - (3.d) existing plan-execution intent + independent tasks -> `subagent-driven-development`
 - (3.d) existing plan-execution intent + sequential tasks -> `executing-plans`
+- routing decision table row coverage -> each active request path maps to exactly one first-hit rule
 - (12.a) subagent on worktree branch -> `ensure_git_context.sh` passes before first write and before commit
 - (12.b) subagent context mismatch -> task reports `BLOCKED` and does not write/commit
 - (7) brainstorming user-review handoff -> includes "newly specified items since Q&A" summary, not path-only prompt
@@ -193,11 +220,12 @@ Validate routing behavior with these checks:
 - AUQ trigger -> unresolved key decision (not finalized) is queried before execution
 - mandatory AUQ gate -> unresolved high-cost key decision blocks execution until explicit AUQ answer
 - AUQ pending-feedback gate -> unresolved feedback state is polled/handled via AUQ before execution
-- first AUQ ask -> uses blocking mode directly (no immediate non-blocking submit+poll sequence)
 - (9) plan-complete execution choice -> `Subagent-Driven` vs `Inline Execution` is asked via AUQ (no plain chat choice prompt)
 - (6) route (3.e) key decisions -> AUQ tool used (no plain-chat substitution)
 - (6) route (3.e) approach choice -> A/B/C recommendation selected via AUQ
-- (15) post-plan cleanup gate -> cleanup is blocked when commits are not yet on `master`
+- (15) base-branch detection -> base branch auto-detected from `origin/HEAD` or repository policy fallback
+- (15) post-plan cleanup gate -> cleanup is blocked when commits are not yet on base branch
+- (15) defer-integration exception -> status set to `implemented_not_integrated` and cleanup skipped
 - (15) plan finish definition -> feature-branch-only implementation is reported as `implemented_not_integrated`
 
 ## Execution Evidence Checklist
@@ -209,7 +237,23 @@ For each execution, capture route-aware evidence:
 - AUQ usage and transitions (if any)
 - verification commands and outcomes
 - feedback stage result (`findings` or `no_findings`) and output path when applicable
-- post-plan integration evidence (if cleanup requested): current branch, commit reachability from `master`, and verification on `master`
+- post-plan integration evidence (if cleanup requested): base branch detection, commit reachability from base branch, and verification on base branch
+- defer-integration evidence (if used): explicit marker, pending-integration note, and skipped-cleanup rationale
+
+## Minimal Verification Commands
+
+Use these minimum commands when validating routing and post-plan gates:
+
+- Detect base branch:
+  - `git symbolic-ref --short refs/remotes/origin/HEAD | sed 's@^origin/@@'`
+- Verify current branch:
+  - `git rev-parse --abbrev-ref HEAD`
+- Verify commit reachability from base branch:
+  - `git branch --contains <commit_sha>`
+- Verify pending workspace state before cleanup/commit:
+  - `git status --short`
+- Verify first-hit routing evidence (when needed):
+  - capture request condition, matched row in routing decision table, and selected route in execution notes
 
 ## References
 
