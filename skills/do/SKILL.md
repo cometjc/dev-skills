@@ -35,7 +35,9 @@ Apply the first matching rule and stop.
 3. Explicit single-thread preference -> `executing-plans`.
 4. Existing plan-execution intent detected:
 - active subagents -> continue `subagent-driven-development`.
-- otherwise -> start `subagent-driven-development` (notify + start).
+- otherwise -> evaluate plan task independence:
+  - has independently executable tasks -> start `subagent-driven-development` (notify + start)
+  - no independent tasks / strongly sequential -> start `executing-plans` (Inline Execution)
 5. New feature or non-obvious bugfix (multiple plausible approaches) -> `brainstorming` + `grill-me` before `writing-plans`.
 6. Straightforward bugfix/test-fix -> `systematic-debugging` -> execution (no plan/spec gate).
 7. Independent multi-domain subproblems (>=2, truly independent) -> `dispatching-parallel-agents`.
@@ -54,7 +56,10 @@ If plan intent is not explicit, do not auto-promote to route 4. This prevents pr
 3. **Executor selection** - Execute strictly according to selected route:
 - `systematic-debugging` route: run directly (no planning/spec generation).
 - `brainstorming` + `grill-me` route: follow full brainstorming gate (design -> spec write -> spec review loop -> user review), then hand off to `writing-plans`.
-- plan-execution routes: prefer `subagent-driven-development`; if user requests single-thread, use `executing-plans`.
+- plan-execution routes: evaluate the selected plan before execution.
+  - if tasks can run independently (disjoint files/modules or no strict sequential dependency), use `subagent-driven-development`.
+  - if tasks are strongly sequential or tightly coupled, use `executing-plans` (Inline Execution).
+  - explicit single-thread preference still overrides to `executing-plans`.
 - `subagent-driven-development` start message: _"Proceeding with subagent-driven-development. Stop me now if you need single-thread execution (executing-plans) to follow the details directly."_
 
 4. **Worktree policy** - Require `using-git-worktrees` before concurrent execution routes (`subagent-driven-development` and `dispatching-parallel-agents`). Single-thread `executing-plans` may run without worktree when risk is low. For detailed failure diagnosis and remediation, follow [Worktree Recovery](references/worktree-recovery.md).
@@ -94,7 +99,8 @@ Validate routing behavior with these checks:
 - non-obvious feature/bugfix -> `brainstorming` + `grill-me` first
 - explicit single-thread request -> `executing-plans`
 - `fix-errors` with non-empty todo -> direct `subagent-driven-development`
-- existing plan-execution intent -> route 4 plan execution flow
+- existing plan-execution intent + independent tasks -> `subagent-driven-development`
+- existing plan-execution intent + sequential tasks -> `executing-plans`
 
 ## Execution Evidence Checklist
 
