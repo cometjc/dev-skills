@@ -66,6 +66,7 @@ function createQuestionSchema(
       .string()
       .describe(
         "The complete question to ask the user. Should be clear, specific, and end with a question mark. " +
+          "Supports Markdown formatting in prompt text. " +
           "Example: 'Which programming language do you want to use?' " +
           "If multiSelect is true, phrase it accordingly, e.g. 'Which features do you want to enable?'",
       ),
@@ -159,6 +160,7 @@ const TOOL_DESCRIPTION =
   "Get decisions on implementation choices as you work\n" +
   "Offer choices to the user about what direction to take.\n" +
   "Usage notes:\n\n" +
+  "Question prompts support Markdown formatting.\n" +
   'Users will always be able to select "Other" to provide custom text input\n' +
   "Use multiSelect: true to allow multiple answers to be selected for a question\n" +
   'Recommend an option unless absolutely necessary, make it the first option in the list and add "(Recommended)" at the end of the label\n' +

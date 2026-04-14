@@ -42,7 +42,7 @@ Common triggers:
 - Target-path question must provide 2-5 concrete path options (recommended option first), then continue with follow-up AUQ on rule content.
 - Each question must include:
   - `title` (max 12 chars)
-  - `prompt` (full question text ending with `?`)
+  - `prompt` (full question text ending with `?`, supports Markdown formatting)
   - `options` (2-5 choices, no manual `Other`)
   - `multiSelect` (`true`/`false`)
 - Put the recommended option first and append `(Recommended)` in the label.
