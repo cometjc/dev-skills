@@ -26,84 +26,139 @@ Route a request to the correct Superpowers workflow and enforce execution guardr
 - writing-skills
 - ask-me
 
-## Routing Priority (Deterministic)
+## Numbered Workflow (Fast-Reference)
 
-Apply the first matching rule and stop.
+Use this indexed flow for routing, fast-forward, and progress references (for example: "jump to (8)" or "resume at (12.b)").
 
-0. Pending user feedback (open AUQ session or unresolved feedback state) -> AUQ continuity gate first (`get_answered_questions`), then route only after explicit status outcome.
-1. `/do ~N` -> Task Status Listing only.
-2. `fix-errors` with non-empty todo -> `subagent-driven-development` (direct, no notify).
-3. Explicit single-thread preference -> `executing-plans`.
-4. Existing plan-execution intent detected:
-- active subagents -> continue `subagent-driven-development`.
-- otherwise -> evaluate plan task independence:
-  - has independently executable tasks -> start `subagent-driven-development` (notify + start)
-  - no independent tasks / strongly sequential -> start `executing-plans` (Inline Execution)
-5. New feature or non-obvious bugfix (multiple plausible approaches) -> `brainstorming` + `grill-me` before `writing-plans`.
-6. Straightforward bugfix/test-fix -> `systematic-debugging` -> execution (no plan/spec gate).
-7. Independent multi-domain subproblems (>=2, truly independent) -> `dispatching-parallel-agents`.
-8. Fallback for unclear scope/new behavior -> `brainstorming`.
+### A. Entry and Routing
 
-## Core Rules
+Apply the first matching route and stop.
 
-1. **Plan-intent artifact discovery (for route 4)** - Treat a request as plan-execution intent only when at least one is true:
-- user explicitly references a plan/spec/todo artifact or asks to continue an existing plan
-- active subagents already belong to an existing plan execution
-- execution context already has an unresolved selected plan artifact
-If plan intent is not explicit, do not auto-promote to route 4. This prevents preemption of straightforward bugfix routing.
+**(1) AUQ continuity gate first**
+- If pending user feedback exists (open AUQ session or unresolved feedback state), call `get_answered_questions` before any execution route.
+- Plain-chat follow-up is forbidden while feedback state is unresolved.
 
-2. **Preflight** - Before execution, check whether work is already applied. If `already_applied`, report evidence and skip execution.
+**(2) Preflight**
+- Check whether requested work is already applied.
+- If `already_applied`, report evidence and skip execution.
 
-3. **Executor selection** - Execute strictly according to selected route:
-- `systematic-debugging` route: run directly (no planning/spec generation).
-- `brainstorming` + `grill-me` route: follow full brainstorming gate (design -> spec write -> spec review loop -> user review), then hand off to `writing-plans`.
-- plan-execution routes: evaluate the selected plan before execution.
-  - if tasks can run independently (disjoint files/modules or no strict sequential dependency), use `subagent-driven-development`.
-  - if tasks are strongly sequential or tightly coupled, use `executing-plans` (Inline Execution).
-  - explicit single-thread preference still overrides to `executing-plans`.
-- `subagent-driven-development` start message: _"Proceeding with subagent-driven-development. Stop me now if you need single-thread execution (executing-plans) to follow the details directly."_
+**(3) Route selection (deterministic)**
+- **(3.a)** `/do ~N` -> Task Status Listing only.
+- **(3.b)** `fix-errors` with non-empty todo -> `subagent-driven-development` (direct, no notify).
+- **(3.c)** Explicit single-thread preference -> `executing-plans`.
+- **(3.d)** Existing plan-execution intent:
+  - active subagents -> continue `subagent-driven-development`
+  - otherwise evaluate independence:
+    - independent tasks -> `subagent-driven-development` (notify + start)
+    - strongly sequential -> `executing-plans`
+- **(3.e)** New feature or non-obvious bugfix -> `brainstorming` + `grill-me` before `writing-plans`.
+- **(3.f)** Straightforward bugfix/test-fix -> `systematic-debugging` direct execution.
+- **(3.g)** Independent multi-domain subproblems (>=2, truly independent) -> `dispatching-parallel-agents`.
+- **(3.h)** Fallback unclear scope/new behavior -> `brainstorming`.
 
-4. **Worktree policy** - Require `using-git-worktrees` before concurrent execution routes (`subagent-driven-development` and `dispatching-parallel-agents`). Single-thread `executing-plans` may run without worktree when risk is low. For detailed failure diagnosis and remediation, follow [Worktree Recovery](references/worktree-recovery.md).
-  - **Subagent git-context hard gate**: when execution is assigned to a specific worktree branch, each subagent MUST run `scripts/ensure_git_context.sh --branch <expected_branch> --toplevel <expected_worktree_root>` before first write and again before commit.
-  - If the check fails, subagent MUST stop and report `BLOCKED`; continuing writes/commit in any other branch/worktree is forbidden.
-  - Controller MUST independently verify after subagent completion: `git -C <worktree> rev-parse --abbrev-ref HEAD` and `git branch --contains <commit_sha>`; reject reviewer handoff if commit is found on non-expected branch.
+### B. Spec Clarification Path (for route 3.e)
 
-5. **Post-plan** - For each completed plan: verify -> feedback stage -> stage only plan-related files + delete plan file -> auto-commit with Conventional Commit message. Exclude unrelated files and emit one-line hints for each excluded file.
+**(4) Brainstorming phase**
+- Run full `brainstorming` gate: design -> spec write -> spec review loop -> user review.
 
-6. **Feedback stage** - Run when execution verification reports failure, ambiguity, or policy drift. Report gaps by severity with file/line evidence; create remediation plan only when findings require follow-up work.
+**(5) Grill-me phase**
+- Use `grill-me` to resolve decision branches and dependencies one-by-one.
 
-7. **Governance edits** - For direct `$do` edits that are single-target, doc-only, low-risk: auto-commit after verification; stage only required files.
+**(6) AUQ decision gate during spec**
+- Unresolved key design decisions must use AUQ (`ask-me`), not plain chat.
+- For multiple viable approaches (A/B/C), final selection must be asked via AUQ.
 
-8. **AUQ policy** - Use AUQ for ambiguity/risk decisions and resumable blocked slices. **REQUIRED SUB-SKILL:** `ask-me` is the primary usage definition (question format/order/templates + runtime transitions). In `do`, only decide **when** to invoke AUQ and then execute exactly per `ask-me` + AUQ MCP return payload (`session_id`, status, answered payload). **First AUQ ask MUST use blocking (`nonBlocking: false`) and wait for answer directly; do not send with `nonBlocking: true` and then immediately poll.**
-  - **Hard gate:** if execution state has pending user feedback, `do` MUST call AUQ tooling before any execution route. Plain-chat follow-up is forbidden in this state.
-  - **Plan-complete execution-choice gate:** when a plan is complete/saved and the next step is choosing execution mode (for example `Subagent-Driven` vs `Inline Execution`), `do` MUST ask via AUQ tooling; do not ask this choice in plain chat.
-  - Pending-feedback continuity:
-    - call `get_answered_questions(session_id, blocking: false)` first
-    - `answered` -> apply answer payload, clear pending state, continue routing
-    - `pending` with independent slices -> continue only independent slices; keep blocked slices resumable
-    - `pending` with critical-path block -> wait via AUQ (`blocking: true`) before continuing
-  - Trigger rule: ask AUQ when a **key decision is not finalized** and cannot be uniquely derived from current rules/artifacts/context.
-  - Mandatory AUQ gate before execution when that unresolved decision also carries high-cost side effects (destructive changes, broad mutations, or expensive rollback).
-  - In these cases, `do` must not proceed with execution until AUQ returns an explicit decision.
-  - In route 5 (`brainstorming` + `grill-me`) under `do`, unresolved design decisions MUST be asked through AUQ tooling. Do not use plain chat questions as a substitute for AUQ when the decision is key to scope, behavior, or risk.
-  - **Route 5 approach-selection gate:** when presenting multiple viable approaches (for example A/B/C with recommendation), the final approach choice MUST be asked via AUQ tooling, not plain chat, even if the recommendation is clear.
-  - AUQ continuity rule: if a question batch is open, fetch its answer state via AUQ response payload before asking the next decision question.
-  - **No immediate-poll anti-pattern:** after creating a new AUQ question batch, do not call `get_answered_questions(blocking: false)` immediately just to observe `pending`; first ask should already be blocking and return the answer payload directly.
+**(7) Spec handoff quality gate**
+- Do not send path-only prompts.
+- Must include:
+  - newly specified items since Q&A
+  - impact if changed now
+  - spec path as supporting reference
 
-9. **fix-errors** - In `fix-errors` mode, new todo items from monitor stage trigger ordered background dispatch; no pause unless explicit blocking condition is hit.
+### C. Plan Writing Path
 
-10. **Planning trigger policy** - Planning is required only for new features or non-obvious bugfixes with meaningful trade-offs. Straightforward fixes bypass plan/spec and go directly through `systematic-debugging`.
+**(8) Write plan**
+- Use `writing-plans` after spec approval.
 
-11. **Spec review prompt quality (brainstorming gate)** - During the `brainstorming` -> `user review` handoff, do not send path-only prompts such as "spec is in `<path>`". The review request MUST include:
-- a concise summary of spec definitions that were **not explicitly resolved during earlier questioning**
-- why those definitions matter for implementation risk/scope
-- the spec path as supporting reference only (not the primary message)
-Recommended structure:
-- `Newly specified items since Q&A: ...`
-- `Impact if changed now: ...`
-- `Spec reference: <path>`
+**(9) AUQ execution-choice gate**
+- If plan is complete and execution mode is undecided (`Subagent-Driven` vs `Inline`), ask via AUQ.
+- Do not ask this choice in plain chat.
 
-12. **AUQ governance question ordering** - For rule/process/doc governance updates, follow `ask-me` question-order contract (target path selection first, then content details). Do not restate template details in `do`; inherit them from `ask-me`.
+### D. Execution Path
+
+**(10) Executor selection**
+- `systematic-debugging` route executes directly (no spec/plan generation).
+- Plan-execution routes:
+  - independent tasks -> `subagent-driven-development`
+  - tightly coupled/sequential -> `executing-plans`
+  - explicit single-thread preference always overrides to `executing-plans`
+- `subagent-driven-development` start message:
+  - _"Proceeding with subagent-driven-development. Stop me now if you need single-thread execution (executing-plans) to follow the details directly."_
+
+**(11) Worktree policy**
+- Require `using-git-worktrees` before concurrent execution routes (`subagent-driven-development`, `dispatching-parallel-agents`).
+- Single-thread `executing-plans` may skip worktree only when risk is low.
+- Follow [Worktree Recovery](references/worktree-recovery.md) when needed.
+
+**(12) Subagent git-context hard gate (when branch/worktree assigned)**
+- **(12.a)** Before first write and before commit, each subagent MUST run:
+  - `scripts/ensure_git_context.sh --branch <expected_branch> --toplevel <expected_worktree_root>`
+- **(12.b)** If check fails, subagent MUST stop and report `BLOCKED` (no writes/commit allowed).
+- **(12.c)** Controller MUST verify after subagent completion:
+  - `git -C <worktree> rev-parse --abbrev-ref HEAD`
+  - `git branch --contains <commit_sha>`
+  - Reject reviewer handoff if commit appears on unexpected branch.
+
+**(13) fix-errors monitor mode**
+- In `fix-errors`, new todo items trigger ordered background dispatch.
+- Do not pause unless explicit blocking condition is hit.
+
+### E. Verification, Feedback, and Completion
+
+**(14) Feedback stage**
+- Run when verification reports failure, ambiguity, or policy drift.
+- Report gaps by severity with file/line evidence.
+- Create remediation plan only when findings require follow-up work.
+
+**(15) Post-plan completion**
+- For each completed plan: verify -> feedback stage -> integration-to-`master` gate -> stage only plan-related files -> delete plan file -> auto-commit (Conventional Commit).
+- Exclude unrelated files and emit one-line hint per excluded file.
+- Plan cleanup is forbidden before implementation commits are integrated into `master` (merge or cherry-pick).
+- "Plan finish" means implementation is committed on `master`; feature-branch-only commits are `implemented_not_integrated`, not finished.
+- Required evidence before cleanup:
+  - `git rev-parse --abbrev-ref HEAD` is `master`
+  - implementation commit SHA(s) are reachable from `master` (`git branch --contains <sha>` includes `master`)
+  - post-integration verification passes on `master`
+
+**(16) Governance doc-only edits**
+- For direct `$do` edits that are single-target, doc-only, low-risk:
+  - auto-commit after verification
+  - stage only required files.
+
+## AUQ Operational Rules (`ask-me`)
+
+`do` decides **when** to invoke AUQ. `ask-me` defines **how** to ask.
+
+- First AUQ ask MUST be blocking (`nonBlocking: false`) when on critical path.
+- Do not submit non-blocking then immediately poll.
+- Pending-feedback continuity:
+  - call `get_answered_questions(session_id, blocking: false)` first
+  - `answered` -> apply payload, clear pending state, continue routing
+  - `pending` + independent slices -> continue independent slices only
+  - `pending` + critical-path block -> wait with `blocking: true`
+- Ask AUQ when key decision is not finalized and cannot be derived from context.
+- Mandatory AUQ gate before execution when unresolved decision carries high-cost side effects.
+- For governance/rule/process doc updates, follow `ask-me` ordering contract (target path first, then content decision).
+
+## Planning Trigger Policy
+
+- Planning is required for new features or non-obvious bugfixes with meaningful trade-offs.
+- Straightforward fixes bypass spec/plan and go directly through `systematic-debugging`.
+- Plan-execution intent is valid only if at least one is true:
+  - user explicitly references plan/spec/todo artifact or asks to continue an existing plan
+  - active subagents already belong to an existing plan execution
+  - execution context already has unresolved selected plan artifact
+- If not explicit, do not auto-promote to route (3.d).
 
 ## Task Status Listing (`~N`)
 
@@ -123,25 +178,27 @@ Output: compact table `N | title | status | updated_at`. Stop; do not route to e
 ## Validation Matrix (Minimum)
 
 Validate routing behavior with these checks:
-- `/do ~N` -> lists session-task status only
-- pending user feedback -> AUQ continuity gate runs before route selection/execution
-- straightforward bugfix/test-fix -> `systematic-debugging` direct execution
-- non-obvious feature/bugfix -> `brainstorming` + `grill-me` first
-- explicit single-thread request -> `executing-plans`
-- `fix-errors` with non-empty todo -> direct `subagent-driven-development`
-- existing plan-execution intent + independent tasks -> `subagent-driven-development`
-- existing plan-execution intent + sequential tasks -> `executing-plans`
-- subagent on worktree branch -> `ensure_git_context.sh` passes before first write and before commit
-- subagent context mismatch -> task reports `BLOCKED` and does not write/commit
-- brainstorming user-review handoff -> includes "newly specified items since Q&A" summary, not path-only prompt
-- governance AUQ flow -> follows `ask-me` question-order contract and templates
+- (3.a) `/do ~N` -> lists session-task status only
+- (1) pending user feedback -> AUQ continuity gate runs before route selection/execution
+- (3.f) straightforward bugfix/test-fix -> `systematic-debugging` direct execution
+- (3.e) non-obvious feature/bugfix -> `brainstorming` + `grill-me` first
+- (3.c) explicit single-thread request -> `executing-plans`
+- (3.b) `fix-errors` with non-empty todo -> direct `subagent-driven-development`
+- (3.d) existing plan-execution intent + independent tasks -> `subagent-driven-development`
+- (3.d) existing plan-execution intent + sequential tasks -> `executing-plans`
+- (12.a) subagent on worktree branch -> `ensure_git_context.sh` passes before first write and before commit
+- (12.b) subagent context mismatch -> task reports `BLOCKED` and does not write/commit
+- (7) brainstorming user-review handoff -> includes "newly specified items since Q&A" summary, not path-only prompt
+- AUQ governance flow -> follows `ask-me` question-order contract and templates
 - AUQ trigger -> unresolved key decision (not finalized) is queried before execution
-- AUQ mandatory gate -> unresolved high-cost key decision blocks execution until explicit AUQ answer
-- AUQ pending-feedback gate -> any unresolved feedback state must be polled/handled via AUQ before execution
+- mandatory AUQ gate -> unresolved high-cost key decision blocks execution until explicit AUQ answer
+- AUQ pending-feedback gate -> unresolved feedback state is polled/handled via AUQ before execution
 - first AUQ ask -> uses blocking mode directly (no immediate non-blocking submit+poll sequence)
-- plan-complete execution choice -> `Subagent-Driven` vs `Inline Execution` is asked via AUQ (no plain chat choice prompt)
-- route 5 Q&A -> uses AUQ tool for unresolved key decisions (no plain-chat substitution)
-- route 5 approach choice -> A/B/C recommendation selection is asked via AUQ (no plain-chat final selection)
+- (9) plan-complete execution choice -> `Subagent-Driven` vs `Inline Execution` is asked via AUQ (no plain chat choice prompt)
+- (6) route (3.e) key decisions -> AUQ tool used (no plain-chat substitution)
+- (6) route (3.e) approach choice -> A/B/C recommendation selected via AUQ
+- (15) post-plan cleanup gate -> cleanup is blocked when commits are not yet on `master`
+- (15) plan finish definition -> feature-branch-only implementation is reported as `implemented_not_integrated`
 
 ## Execution Evidence Checklist
 
@@ -152,6 +209,7 @@ For each execution, capture route-aware evidence:
 - AUQ usage and transitions (if any)
 - verification commands and outcomes
 - feedback stage result (`findings` or `no_findings`) and output path when applicable
+- post-plan integration evidence (if cleanup requested): current branch, commit reachability from `master`, and verification on `master`
 
 ## References
 
