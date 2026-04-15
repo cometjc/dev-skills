@@ -291,6 +291,7 @@ It is recommended to **disable** the built-in questioning tool in your harness (
 | `Ctrl+T` | Theme         | Cycle through available color themes                               |
 | `[`/`]`  | Sessions      | Switch to previous/next session (OpenTUI: also click session dots) |
 | `T`      | Telegram      | Toggle Telegram sync on/off; launches setup wizard if not configured |
+| `W`      | Tmux Switch   | Toggle tmux auto-switch behavior in waiting/question views            |
 
 **Mouse Support (OpenTUI renderer only):**
 
@@ -456,6 +457,17 @@ Open the bot and send the PIN to bind `allowedChatId`.
 If a chat is already bound, AUQ rejects overwrite by default; use `auq config telegram rebind`.
 
 **TUI quick-toggle:** Press `T` in the TUI to enable/disable Telegram sync at any time. If Telegram is not yet configured, `T` opens the setup wizard. When you **enable** Telegram, AUQ automatically reconciles active sessions — adding new messages, editing updated ones, and removing stale entries — so your Telegram chat catches up instantly.
+
+### Tmux Cross-Session Switching
+
+OpenTUI can coordinate AUQ instance switching across tmux sessions/windows by maintaining a shared instance registry:
+
+- Registry file: `~/.config/auq/tmux-instances.json`
+- Optional path override: `AUQ_TMUX_INSTANCES_PATH`
+- Heartbeat adapts to active instance count with TTL-based pruning
+- Target selection prefers last-used AUQ location, then newest reachable AUQ instance
+
+See `docs/tmux-cross-session.md` for full timing and selection details.
 
 
 ### Stale Session Detection
