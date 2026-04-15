@@ -106,6 +106,7 @@ Apply the first matching route and stop.
 **(6) AUQ decision gate during spec**
 - Unresolved key design decisions must use AUQ (`ask-me`), not plain chat.
 - For multiple viable approaches (A/B/C), final selection must be asked via AUQ.
+- This includes **single-question strategy clarifications** during planning (for example target tmux-session selection); do not ask them in plain chat.
 - This applies throughout path B, including phases (4) and (5); plain-chat substitution remains forbidden.
 
 **(7) Spec handoff quality gate**
@@ -180,6 +181,7 @@ Apply the first matching route and stop.
 - For direct `$do` edits that are single-target, doc-only, low-risk:
   - auto-commit after verification
   - stage only required files.
+- When the request includes edits in an external repo (outside the current workspace repo), finish by creating commits in each affected external repo after verification.
 
 ## AUQ Operational Rules (`ask-me`)
 
@@ -192,6 +194,7 @@ For the default `/do` chained stack (`brainstorming` + `grill-me`), treat **all*
 - Trigger AUQ when a key decision is not finalized and cannot be derived from context.
 - Mandatory AUQ gate before execution when unresolved decision carries high-cost side effects.
 - Hard gate: pending feedback must be resolved through AUQ tooling before route execution.
+- Even when only one clarification question is needed, use AUQ tooling instead of plain chat.
 - Plan-complete execution-choice gate must use AUQ tooling (not plain chat).
 - Governance/rule/process doc updates must use `ask-me` ordering contract.
 
