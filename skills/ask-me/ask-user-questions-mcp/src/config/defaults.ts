@@ -26,6 +26,14 @@ export const DEFAULT_CONFIG: AUQConfig = {
     bindHost: "0.0.0.0",
     bindPort: 8080,
   },
+  tmux: {
+    autoSwitch: {
+      enabled: false,
+      returnToSource: true,
+      prompted: false,
+      askOnFirstTmux: true,
+    },
+  },
 
   // Update
   updateCheck: true,

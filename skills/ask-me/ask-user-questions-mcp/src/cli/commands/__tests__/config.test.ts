@@ -126,6 +126,7 @@ describe("config command", () => {
       expect(allOutput).toContain("notifications.sound = true");
       expect(allOutput).toContain("telegram.enabled = false");
       expect(allOutput).toContain("telegram.bindHost = 0.0.0.0");
+      expect(allOutput).toContain("tmux.autoSwitch.enabled = false");
     });
 
     it("should show specific key value", async () => {
@@ -381,6 +382,18 @@ describe("config command", () => {
       const writeCall = vi.mocked(fs.writeFileSync).mock.calls[0];
       const written = JSON.parse(writeCall[1] as string);
       expect(written.telegram.bindPort).toBe(9000);
+    });
+
+    it("should set deeply nested tmux config values", async () => {
+      vi.mocked(fs.existsSync).mockReturnValue(false);
+
+      await runConfigCommand(["set", "tmux.autoSwitch.enabled", "true"]);
+
+      expect(process.exitCode).toBeUndefined();
+      expect(fs.writeFileSync).toHaveBeenCalled();
+      const writeCall = vi.mocked(fs.writeFileSync).mock.calls[0];
+      const written = JSON.parse(writeCall[1] as string);
+      expect(written.tmux.autoSwitch.enabled).toBe(true);
     });
 
     it("should output JSON with --json flag", async () => {

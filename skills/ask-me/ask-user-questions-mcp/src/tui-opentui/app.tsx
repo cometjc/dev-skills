@@ -43,6 +43,11 @@ import type { UpdateInfo } from "../update/types.js";
 import { KEYS } from "../tui/constants/keybindings.js";
 import { runConfigCommand } from "../cli/commands/config.js";
 import {
+  getCurrentTmuxWindowId,
+  isRunningInTmux,
+  selectTmuxWindow,
+} from "../tui/shared/utils/tmux.js";
+import {
   startTelegramClientRuntime,
   stopTelegramClientRuntime,
 } from "../telegram/runtime.js";
@@ -95,6 +100,12 @@ interface ToastData {
   message: string;
   type: "success" | "error" | "info";
   title?: string;
+}
+
+interface TmuxPromptState {
+  visible: boolean;
+  focusedIndex: number;
+  dontAskAgain: boolean;
 }
 
 function isTelegramConfigured(telegram: {
@@ -165,6 +176,20 @@ function AppInner({ config }: { config: AUQConfig }) {
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [showTelegramWizard, setShowTelegramWizard] = useState(false);
+  const [tmuxPromptState, setTmuxPromptState] = useState<TmuxPromptState>({
+    visible: false,
+    focusedIndex: 0,
+    dontAskAgain: false,
+  });
+  const tmuxRuntimeRef = useRef<{
+    auqWindowId: string | null;
+    pendingReturnWindowId: string | null;
+    switchedSessionId: string | null;
+  }>({
+    auqWindowId: null,
+    pendingReturnWindowId: null,
+    switchedSessionId: null,
+  });
 
   // Notification configuration from config
   const notificationConfig = useMemo(
@@ -204,6 +229,32 @@ function AppInner({ config }: { config: AUQConfig }) {
       );
     }
   }, [showToast]);
+
+  const setTmuxAutoSwitchEnabled = useCallback(
+    async (enabled: boolean) => {
+      try {
+        await runConfigCommandExpectSuccess([
+          "set",
+          "tmux.autoSwitch.enabled",
+          String(enabled),
+        ]);
+        showToast(
+          enabled ? "Tmux 自動切換已啟用" : "Tmux 自動切換已停用",
+          "info",
+          "Tmux",
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Tmux 設定更新失敗";
+        showToast(message, "error", "Tmux");
+      }
+    },
+    [showToast],
+  );
+
+  const handleToggleTmuxAutoSwitch = useCallback(() => {
+    const latest = getConfig();
+    void setTmuxAutoSwitchEnabled(!latest.tmux.autoSwitch.enabled);
+  }, [setTmuxAutoSwitchEnabled]);
 
   const handleWaitingTelegramInit = useCallback(
     async (values: { token: string; funnelMode: "auto" | "off"; webhookUrl?: string }) => {
@@ -315,6 +366,19 @@ function AppInner({ config }: { config: AUQConfig }) {
     };
   }, [syncTelegramRuntime]);
 
+  useEffect(() => {
+    if (!isRunningInTmux()) return;
+    const latest = getConfig();
+    if (!latest.tmux.autoSwitch.askOnFirstTmux || latest.tmux.autoSwitch.prompted) return;
+    const auqWindowId = getCurrentTmuxWindowId();
+    tmuxRuntimeRef.current.auqWindowId = auqWindowId;
+    setTmuxPromptState({
+      visible: true,
+      focusedIndex: latest.tmux.autoSwitch.enabled ? 0 : 1,
+      dontAskAgain: false,
+    });
+  }, []);
+
   // ── Auto-update checker ─────────────────────────────────────
   useEffect(() => {
     if (config.updateCheck === false) return;
@@ -371,6 +435,50 @@ function AppInner({ config }: { config: AUQConfig }) {
       setActiveSessionIndex(0);
     }
   }, [state.mode, sessionQueue.length, isInitialized]);
+
+  useEffect(() => {
+    if (!isRunningInTmux()) return;
+    const latest = getConfig();
+    if (!latest.tmux.autoSwitch.enabled) return;
+    if (state.mode !== "PROCESSING") return;
+    const activeSession = sessionQueue[activeSessionIndex];
+    if (!activeSession) return;
+    if (tmuxRuntimeRef.current.switchedSessionId === activeSession.sessionId) return;
+
+    const auqWindowId =
+      tmuxRuntimeRef.current.auqWindowId ?? getCurrentTmuxWindowId();
+    tmuxRuntimeRef.current.auqWindowId = auqWindowId;
+    if (!auqWindowId) return;
+
+    const currentWindowId = getCurrentTmuxWindowId();
+    if (!currentWindowId || currentWindowId === auqWindowId) {
+      tmuxRuntimeRef.current.pendingReturnWindowId = null;
+      tmuxRuntimeRef.current.switchedSessionId = activeSession.sessionId;
+      return;
+    }
+
+    tmuxRuntimeRef.current.pendingReturnWindowId = currentWindowId;
+    tmuxRuntimeRef.current.switchedSessionId = activeSession.sessionId;
+    if (!selectTmuxWindow(auqWindowId)) {
+      showToast("Tmux 自動切換失敗", "error", "Tmux");
+    }
+  }, [activeSessionIndex, sessionQueue, showToast, state.mode]);
+
+  useEffect(() => {
+    if (!isRunningInTmux()) return;
+    const latest = getConfig();
+    if (!latest.tmux.autoSwitch.returnToSource) return;
+    if (state.mode !== "WAITING") return;
+    const targetWindow = tmuxRuntimeRef.current.pendingReturnWindowId;
+    const auqWindowId = tmuxRuntimeRef.current.auqWindowId;
+    if (!targetWindow || !auqWindowId) return;
+    const currentWindowId = getCurrentTmuxWindowId();
+    if (currentWindowId === auqWindowId) {
+      void selectTmuxWindow(targetWindow);
+    }
+    tmuxRuntimeRef.current.pendingReturnWindowId = null;
+    tmuxRuntimeRef.current.switchedSessionId = null;
+  }, [state.mode]);
 
   // ── Stale detection + background session status polling ──────
   const sessionQueueRef = useRef(sessionQueue);
@@ -545,6 +653,7 @@ function AppInner({ config }: { config: AUQConfig }) {
 
   const isNavActive =
     state.mode === "PROCESSING" &&
+    !tmuxPromptState.visible &&
     !isInReviewOrRejection &&
     !showSessionPicker &&
     !showUpdateOverlay &&
@@ -596,6 +705,7 @@ function AppInner({ config }: { config: AUQConfig }) {
 
   // Ctrl+S outside isNavActive (fewer conditions)
   useKeyboard((key) => {
+    if (tmuxPromptState.visible) return;
     if (state.mode !== "PROCESSING") return;
     if (showSessionPicker || showUpdateOverlay) return;
     if (key.ctrl && (key.sequence === "\x13" || key.name === "s")) {
@@ -604,6 +714,56 @@ function AppInner({ config }: { config: AUQConfig }) {
   });
 
   useKeyboard((key) => {
+    if (!tmuxPromptState.visible) return;
+    if (key.name === "up") {
+      setTmuxPromptState((prev) => ({ ...prev, focusedIndex: 0 }));
+      return;
+    }
+    if (key.name === "down") {
+      setTmuxPromptState((prev) => ({ ...prev, focusedIndex: 1 }));
+      return;
+    }
+    if (key.name?.toLowerCase() === "d" && !key.ctrl && !key.meta) {
+      setTmuxPromptState((prev) => ({
+        ...prev,
+        dontAskAgain: !prev.dontAskAgain,
+      }));
+      return;
+    }
+    if (key.name === "return") {
+      const enabled = tmuxPromptState.focusedIndex === 0;
+      const askOnFirstTmux = !tmuxPromptState.dontAskAgain;
+      void runConfigCommandExpectSuccess([
+        "set",
+        "tmux.autoSwitch.enabled",
+        String(enabled),
+      ])
+        .then(() =>
+          runConfigCommandExpectSuccess([
+            "set",
+            "tmux.autoSwitch.prompted",
+            "true",
+          ]),
+        )
+        .then(() =>
+          runConfigCommandExpectSuccess([
+            "set",
+            "tmux.autoSwitch.askOnFirstTmux",
+            String(askOnFirstTmux),
+          ]),
+        )
+        .finally(() =>
+          setTmuxPromptState({
+            visible: false,
+            focusedIndex: enabled ? 0 : 1,
+            dontAskAgain: false,
+          }),
+        );
+    }
+  });
+
+  useKeyboard((key) => {
+    if (tmuxPromptState.visible) return;
     if (state.mode !== "WAITING") return;
     if (showUpdateOverlay || showTelegramWizard) return;
     if (key.ctrl || key.meta) return;
@@ -615,6 +775,14 @@ function AppInner({ config }: { config: AUQConfig }) {
       return;
     }
     void handleWaitingTelegramToggle();
+  });
+
+  useKeyboard((key) => {
+    if (tmuxPromptState.visible) return;
+    if (key.ctrl || key.meta) return;
+    if (key.name?.toLowerCase() !== "w") return;
+    if (state.mode !== "WAITING" && state.mode !== "PROCESSING") return;
+    handleToggleTmuxAutoSwitch();
   });
 
   // ── Update overlay handlers ────────────────────────────────────
@@ -743,7 +911,30 @@ function AppInner({ config }: { config: AUQConfig }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let mainContent: any;
   if (state.mode === "WAITING") {
-    if (showTelegramWizard) {
+    if (tmuxPromptState.visible) {
+      mainContent = (
+        <box style={{ flexDirection: "column", paddingLeft: 2, paddingRight: 2, paddingTop: 1, paddingBottom: 1 }}>
+          <box style={{ borderStyle: "rounded", borderColor: theme.borders.warning, flexDirection: "column", padding: 1 }}>
+            <text style={{ fg: theme.colors.warning, bold: true }}>偵測到你在 tmux 中執行 AUQ</text>
+            <text style={{ fg: theme.colors.textDim }}>要啟用自動切到 AUQ 視窗嗎？</text>
+            <box style={{ marginTop: 1, flexDirection: "column" }}>
+              <text style={{ bold: tmuxPromptState.focusedIndex === 0 }}>
+                {`${tmuxPromptState.focusedIndex === 0 ? "> " : "  "}啟用自動切換 (Recommended)`}
+              </text>
+              <text style={{ bold: tmuxPromptState.focusedIndex === 1 }}>
+                {`${tmuxPromptState.focusedIndex === 1 ? "> " : "  "}保持關閉`}
+              </text>
+            </box>
+            <box style={{ marginTop: 1 }}>
+              <text>{`[${tmuxPromptState.dontAskAgain ? "x" : " "}] Don't ask me again (按 D 切換)`}</text>
+            </box>
+            <box style={{ marginTop: 1 }}>
+              <text style={{ fg: theme.colors.textDim }}>↑↓ 選擇 • Enter 確認</text>
+            </box>
+          </box>
+        </box>
+      );
+    } else if (showTelegramWizard) {
       mainContent = (
         <TelegramSetupWizard
           onCancel={() => setShowTelegramWizard(false)}
@@ -756,6 +947,7 @@ function AppInner({ config }: { config: AUQConfig }) {
         <WaitingScreen
           queueCount={sessionQueue.length}
           showTelegramShortcutHint={true}
+          showTmuxShortcutHint={isRunningInTmux()}
         />
       );
     }
@@ -779,6 +971,7 @@ function AppInner({ config }: { config: AUQConfig }) {
           onTelegramConfigChanged={() => {
             void syncTelegramRuntime();
           }}
+          onToggleTmuxAutoSwitch={handleToggleTmuxAutoSwitch}
         />
       );
     }
