@@ -151,7 +151,7 @@ Apply the first matching route and stop.
 - During PLD execution, continue dispatch/review/refill without per-lane confirmation prompts.
 - User-facing interruption is allowed only for:
   - AUQ high-cost decision gates
-  - repeated lane failure escalation threshold
+  - lane escalation event emitted by PLD governance
   - all lanes blocked / no safe dispatchable work
   - irreversible integration action requiring explicit confirmation by policy.
 - For normal progress, emit concise progress snapshots instead of questions.
@@ -206,7 +206,7 @@ Set `PLD_TOOL_CMD` to the project-valid command first.
 - avoid tight polling loops; use scheduler snapshots for orchestration decisions.
 
 **Escalation trigger**
-- if the same lane reaches 3 consecutive review-gate failures (per `skills/pld/spec/PLD/canonical-contract.md`), raise AUQ escalation and mark affected slices blocked until recovery decision arrives.
+- if PLD emits a lane escalation event (per `skills/pld/spec/PLD/canonical-contract.md` policy), raise AUQ escalation and mark affected slices blocked until recovery decision arrives.
 
 ### E. Verification, Feedback, and Completion
 
@@ -214,6 +214,8 @@ Set `PLD_TOOL_CMD` to the project-valid command first.
 - Run when verification reports failure, ambiguity, or policy drift.
 - Report gaps by severity with file/line evidence.
 - Create remediation plan only when findings require follow-up work.
+- If the user has requested process/governance flow changes, propose `/do` flow-improvement options in this review phase and get explicit user confirmation before applying those process-rule edits.
+- Flow-improvement proposals in review must be option-based (recommended option first + alternatives), not a single forced proposal.
 
 **(15) Post-plan completion**
 - For each completed plan: verify -> feedback stage -> integration-to-base-branch gate -> stage only plan-related files -> delete plan file -> auto-commit (Conventional Commit).
@@ -230,6 +232,15 @@ Set `PLD_TOOL_CMD` to the project-valid command first.
   - detected base branch name
   - implementation commit SHA(s) are reachable from base branch (`git branch --contains <sha>` includes base branch)
   - post-integration verification passes on base branch
+
+**(15.a) Post-cleanup process-improvement prompt (mandatory)**
+- After cleanup completes for a `/do` execution, ask once:
+  - _"Do you want to run a `/do` process-improvement pass for this run?"_
+- If user says **yes**, run a focused improvement pass based on this run's execution history:
+  - summarize friction points with evidence
+  - propose 2-4 options (recommended first)
+  - confirm selected option(s) before editing `do`/`pld` governance docs
+- If user says **no**, end without additional process-rule edits.
 
 **(16) Governance doc-only edits**
 - For direct `$do` edits that are single-target, doc-only, low-risk:
@@ -303,12 +314,14 @@ Validate routing behavior with these checks:
 - (6) path B (3.e, 3.h) key decisions -> AUQ tool used (no plain-chat substitution)
 - (6) path B approach choice -> A/B/C recommendation selected via AUQ
 - `pld` non-blocking AUQ -> pending answer blocks only affected slices while independent lanes keep running
-- `pld` escalation policy -> same lane review-gate failures escalate after 3 consecutive failures (see `skills/pld/spec/PLD/canonical-contract.md`)
+- `pld` escalation policy -> lane escalation event is raised per canonical contract policy and handled via AUQ gate
 - `pld` dispatch mode `auto` -> selects `streaming` when async capability exists, else `wave`
 - mixed-capability execution -> async lanes keep progressing while wave-constrained lanes wait at barrier
 - quiet-autopilot -> no per-lane confirmation prompts during normal progression
+- review-stage flow improvement -> when requested by user, `/do` process-improvement options are presented during feedback/review and require explicit confirmation
 - (15) base-branch detection -> base branch auto-detected from `origin/HEAD` or repository policy fallback
 - (15) post-plan cleanup gate -> cleanup is blocked when commits are not yet on base branch
+- (15.a) post-cleanup prompt -> `/do` asks once whether to run process-improvement pass
 - (15) defer-integration exception -> status set to `implemented_not_integrated` and cleanup skipped
 - (15) plan finish definition -> feature-branch-only implementation is reported as `implemented_not_integrated`
 
@@ -344,11 +357,11 @@ Use these concrete scenarios to validate route, AUQ continuity, and PLD recovery
    - Expected: `get_answered_questions` consumed before next route action; blocked slices reattached.
    - Evidence: answered payload summary + resumed lane ids + next `audit --json` delta.
 
-6. **lane failure escalation at 3 consecutive failures**
-   - Trigger: same lane fails consecutive review gates (per gate ordering in `skills/pld/spec/PLD/canonical-contract.md`).
-   - Expected: attempts 1-2 remain auto-repair; attempt 3 escalates to AUQ decision gate.
+6. **lane escalation event handling**
+   - Trigger: PLD emits lane escalation event (per `skills/pld/spec/PLD/canonical-contract.md` policy).
+   - Expected: AUQ decision gate is raised and affected slices are blocked until resolution.
    - Evidence:
-     - lane failure counter trail (`attempt=1`, `attempt=2`, `attempt=3`)
+     - escalation event payload
      - escalation AUQ session id
      - post-decision action note (re-scope, pause, or recover path)
 
@@ -372,11 +385,13 @@ For PLD-routed runs, add these normalized fields to execution notes:
 - `auq_mode`: `blocking` or `non_blocking`
 - `auq_session_id`: `<id>` when AUQ is used
 - `blocked_slices`: `[slice_id...]` (empty when none)
-- `lane_failure_counter`: `{ "<execution>/<lane>": <n> }`
+- `lane_escalation_event`: `{ "execution": "<id>", "lane": "<lane>", "reason": "<reason>" }|none`
 - `resume_event`: `answered|pending|timeout|none`
 - `dispatch_mode`: `auto|streaming|wave`
 - `scheduler_barrier`: `none|wave_waiting|mixed`
 - `user_interrupt_reason`: `auq_gate|escalation|all_blocked|irreversible_action|none`
+- `process_improvement_requested`: `yes|no`
+- `process_improvement_option_selected`: `<option_id>|none`
 
 ## Minimal Verification Commands
 
