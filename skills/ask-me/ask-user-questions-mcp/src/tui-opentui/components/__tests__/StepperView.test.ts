@@ -5,7 +5,7 @@
  * - Answer management (single-select, multi-select, elaborate)
  * - Navigation boundaries
  */
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import {
   makeSessionRequest,
   makeMultiQuestionRequest,
@@ -61,7 +61,10 @@ describe("formatElapsedLabel", () => {
 // ─── safeIndex clamping (navigation boundary logic) ───────────────────────
 
 describe("StepperView safe index clamping", () => {
-  function computeSafeIndex(currentIndex: number, totalQuestions: number): number {
+  function computeSafeIndex(
+    currentIndex: number,
+    totalQuestions: number,
+  ): number {
     return Math.min(currentIndex, totalQuestions - 1);
   }
 
@@ -95,7 +98,10 @@ describe("StepperView safe index clamping", () => {
 // ─── handleAdvanceToNext logic ─────────────────────────────────────────────────
 
 describe("advance-to-next logic", () => {
-  function computeNextState(currentIndex: number, totalQuestions: number): {
+  function computeNextState(
+    currentIndex: number,
+    totalQuestions: number,
+  ): {
     newIndex: number;
     showReview: boolean;
   } {
@@ -155,8 +161,12 @@ describe("content overflow estimation", () => {
 // ─── Recommended session detection logic ────────────────────────────────────
 
 describe("session recommended detection", () => {
-  function anyHasRecommended(questions: Array<{ options: Array<{ label: string }> }>): boolean {
-    return questions.some((q) => q.options.some((opt) => isRecommendedOption(opt.label)));
+  function anyHasRecommended(
+    questions: Array<{ options: Array<{ label: string }> }>,
+  ): boolean {
+    return questions.some((q) =>
+      q.options.some((opt) => isRecommendedOption(opt.label)),
+    );
   }
 
   test("detects recommended options in default fixture", () => {
@@ -189,15 +199,62 @@ describe("session recommended detection", () => {
 // ─── Telegram shortcut behavior ───────────────────────────────────────────────
 
 describe("telegram shortcut behavior", () => {
-  test("detects configured telegram by webhook or allowed chat", () => {
-    expect(isTelegramConfigured({ enabled: true, webhookUrl: "" })).toBe(false);
-    expect(isTelegramConfigured({ enabled: false, webhookUrl: "" })).toBe(false);
+  const TOKEN_KEY = "AUQ_TELEGRAM_BOT_TOKEN";
+
+  beforeEach(() => {
+    delete process.env[TOKEN_KEY];
+  });
+
+  afterEach(() => {
+    delete process.env[TOKEN_KEY];
+  });
+
+  test("requires webhook and token env to be configured", () => {
     expect(
-      isTelegramConfigured({ enabled: false, webhookUrl: "https://example.com/webhook" }),
+      isTelegramConfigured({
+        enabled: true,
+        webhookUrl: "",
+        tokenEnvKey: TOKEN_KEY,
+      }),
+    ).toBe(false);
+    expect(
+      isTelegramConfigured({
+        enabled: false,
+        webhookUrl: "",
+        tokenEnvKey: TOKEN_KEY,
+      }),
+    ).toBe(false);
+    expect(
+      isTelegramConfigured({
+        enabled: false,
+        webhookUrl: "https://example.com/webhook",
+        tokenEnvKey: TOKEN_KEY,
+      }),
+    ).toBe(false);
+    process.env[TOKEN_KEY] = "token";
+    expect(
+      isTelegramConfigured({
+        enabled: false,
+        webhookUrl: "https://example.com/webhook",
+        tokenEnvKey: TOKEN_KEY,
+      }),
+    ).toBe(false);
+    expect(
+      isTelegramConfigured({
+        enabled: false,
+        webhookUrl: "https://example.com/webhook",
+        allowedChatId: "12345",
+        tokenEnvKey: TOKEN_KEY,
+      }),
     ).toBe(true);
     expect(
-      isTelegramConfigured({ enabled: false, webhookUrl: "", allowedChatId: "12345" }),
-    ).toBe(true);
+      isTelegramConfigured({
+        enabled: false,
+        webhookUrl: "",
+        allowedChatId: "12345",
+        tokenEnvKey: TOKEN_KEY,
+      }),
+    ).toBe(false);
   });
 
   test("returns setup in main option context when webhook is missing", () => {
@@ -222,10 +279,32 @@ describe("telegram shortcut behavior", () => {
     ).toBe("setup");
   });
 
-  test("returns toggle in main option context when webhook exists", () => {
+  test("returns setup in main option context when pairing is still missing", () => {
+    process.env[TOKEN_KEY] = "token";
     expect(
       getTelegramShortcutOutcome(
-        { enabled: false, webhookUrl: "https://example.com/webhook" },
+        {
+          enabled: false,
+          webhookUrl: "https://example.com/webhook",
+          tokenEnvKey: TOKEN_KEY,
+        },
+        "option",
+        0,
+        3,
+      ),
+    ).toBe("setup");
+  });
+
+  test("returns toggle in main option context when webhook, token, and allowed chat exist", () => {
+    process.env[TOKEN_KEY] = "token";
+    expect(
+      getTelegramShortcutOutcome(
+        {
+          enabled: false,
+          webhookUrl: "https://example.com/webhook",
+          allowedChatId: "12345",
+          tokenEnvKey: TOKEN_KEY,
+        },
         "option",
         0,
         3,
@@ -233,10 +312,30 @@ describe("telegram shortcut behavior", () => {
     ).toBe("toggle");
   });
 
-  test("ignores telegram shortcut in text input contexts", () => {
+  test("returns setup when token env is missing", () => {
     expect(
       getTelegramShortcutOutcome(
-        { enabled: true, webhookUrl: "https://example.com/webhook" },
+        {
+          enabled: false,
+          webhookUrl: "https://example.com/webhook",
+          tokenEnvKey: TOKEN_KEY,
+        },
+        "option",
+        0,
+        3,
+      ),
+    ).toBe("setup");
+  });
+
+  test("ignores telegram shortcut in text input contexts", () => {
+    process.env[TOKEN_KEY] = "token";
+    expect(
+      getTelegramShortcutOutcome(
+        {
+          enabled: true,
+          webhookUrl: "https://example.com/webhook",
+          tokenEnvKey: TOKEN_KEY,
+        },
         "custom-input",
         0,
         3,
@@ -244,7 +343,11 @@ describe("telegram shortcut behavior", () => {
     ).toBe("ignore");
     expect(
       getTelegramShortcutOutcome(
-        { enabled: true, webhookUrl: "https://example.com/webhook" },
+        {
+          enabled: true,
+          webhookUrl: "https://example.com/webhook",
+          tokenEnvKey: TOKEN_KEY,
+        },
         "elaborate-input",
         0,
         3,
@@ -299,7 +402,11 @@ describe("telegram command args", () => {
 // ─── Answer state management logic ───────────────────────────────────────────────────
 
 describe("answer state management", () => {
-  type Answer = { selectedOption?: string; selectedOptions?: string[]; customText?: string };
+  type Answer = {
+    selectedOption?: string;
+    selectedOptions?: string[];
+    customText?: string;
+  };
 
   function handleSelectOption(
     answers: Map<number, Answer>,
@@ -363,7 +470,9 @@ describe("answer state management", () => {
   });
 
   test("handleToggleOption preserves customText", () => {
-    const answers = new Map([[0, { selectedOptions: [], customText: "my custom" }]]);
+    const answers = new Map([
+      [0, { selectedOptions: [], customText: "my custom" }],
+    ]);
     const result = handleToggleOption(answers, 0, "Alpha");
     expect(result.get(0)?.customText).toBe("my custom");
   });

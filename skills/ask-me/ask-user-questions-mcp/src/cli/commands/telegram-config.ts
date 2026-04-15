@@ -9,18 +9,16 @@ import { TelegramClient } from "../../telegram/client.js";
 import { setupTailscaleFunnelAuto } from "../../telegram/funnel.js";
 import { putPendingPairing } from "../../telegram/pairing-file.js";
 
-function readJsonFile(
-  path: string,
-  strict = false,
-): Record<string, unknown> {
+function readJsonFile(path: string, strict = false): Record<string, unknown> {
   if (!existsSync(path)) return {};
   try {
     return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
   } catch (error) {
     if (strict) {
-      const message =
-        error instanceof Error ? error.message : String(error);
-      throw new Error(`Invalid JSON in telegram config file at ${path}: ${message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Invalid JSON in telegram config file at ${path}: ${message}`,
+      );
     }
     return {};
   }
@@ -39,7 +37,10 @@ function generatePin(length = 6): string {
   return randomInt(0, max).toString().padStart(length, "0");
 }
 
-function getStringFlag(flags: Record<string, string | true>, key: string): string | undefined {
+function getStringFlag(
+  flags: Record<string, string | true>,
+  key: string,
+): string | undefined {
   const value = flags[key];
   if (typeof value === "string") return value;
   return undefined;
@@ -59,9 +60,7 @@ function prompt(question: string): Promise<string> {
 
 function isInteractiveMode(jsonMode: boolean): boolean {
   return (
-    !jsonMode &&
-    process.stdin.isTTY === true &&
-    process.stdout.isTTY === true
+    !jsonMode && process.stdin.isTTY === true && process.stdout.isTTY === true
   );
 }
 
@@ -114,7 +113,9 @@ function readTokenFromDotEnv(key: string): string | null {
 
   const raw = readFileSync(envPath, "utf8");
   const lines = raw.split(/\r?\n/);
-  const matcher = new RegExp(`^(?:\\s*export\\s+)?${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*=\\s*(.*)$`);
+  const matcher = new RegExp(
+    `^(?:\\s*export\\s+)?${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*=\\s*(.*)$`,
+  );
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -123,7 +124,10 @@ function readTokenFromDotEnv(key: string): string | null {
     if (!match) continue;
     const value = match[1]?.trim() ?? "";
     if (!value) return "";
-    if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
       return value.slice(1, -1);
     }
     return value;
@@ -153,8 +157,13 @@ function upsertTokenToDotEnv(key: string, value: string): void {
     return current;
   });
 
-  const normalized = replaced ? next.join("\n") : `${raw}${raw.endsWith("\n") || raw.length === 0 ? "" : "\n"}${line}\n`;
-  writeFileSync(envPath, normalized.endsWith("\n") ? normalized : `${normalized}\n`);
+  const normalized = replaced
+    ? next.join("\n")
+    : `${raw}${raw.endsWith("\n") || raw.length === 0 ? "" : "\n"}${line}\n`;
+  writeFileSync(
+    envPath,
+    normalized.endsWith("\n") ? normalized : `${normalized}\n`,
+  );
 }
 
 async function resolveFunnelMode(
@@ -210,9 +219,9 @@ async function resolveToken(
   }
 
   if (isInteractiveMode(jsonMode)) {
-    const token = (await prompt(
-      `請輸入 ${tokenEnvKey}（會即時寫入目前目錄 .env）: `,
-    )).trim();
+    const token = (
+      await prompt(`請輸入 ${tokenEnvKey}（會即時寫入目前目錄 .env）: `)
+    ).trim();
     if (!token) {
       outputResult(
         {
@@ -276,7 +285,8 @@ async function resolveWebhookUrl(
   outputResult(
     {
       success: false,
-      error: "webhook-url 必須提供且必須是 https:// URL（建議使用 Tailscale Funnel）",
+      error:
+        "webhook-url 必須提供且必須是 https:// URL（建議使用 Tailscale Funnel）",
     },
     jsonMode,
   );
@@ -338,7 +348,8 @@ export async function runTelegramConfigCommand(args: string[]): Promise<void> {
     outputResult(
       {
         success: false,
-        error: "Telegram chat 已綁定。預設拒絕覆蓋，請使用 `auq config telegram rebind`。",
+        error:
+          "Telegram chat 已綁定。預設拒絕覆蓋，請使用 `auq config telegram rebind`。",
       },
       jsonMode,
     );
@@ -458,7 +469,8 @@ export async function runTelegramConfigCommand(args: string[]): Promise<void> {
     outputResult(
       {
         success: false,
-        error: "webhook-url 必須提供且必須是 https:// URL（建議使用 Tailscale Funnel）",
+        error:
+          "webhook-url 必須提供且必須是 https:// URL（建議使用 Tailscale Funnel）",
       },
       jsonMode,
     );
@@ -480,10 +492,15 @@ export async function runTelegramConfigCommand(args: string[]): Promise<void> {
   const pin = generatePin(6);
   const pairingId = randomUUID();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  const username = me.username ?? "";
+  const botLink = username
+    ? `https://t.me/${username}?start=pair_${pairingId}`
+    : "(bot username not available)";
 
   putPendingPairing({
     id: pairingId,
     pin,
+    botLink,
     expiresAt,
     attemptsLeft: 5,
     targetConfigFile: targetPath,
@@ -498,14 +515,9 @@ export async function runTelegramConfigCommand(args: string[]): Promise<void> {
     webhookUrl: resolvedWebhookUrl ?? "",
     bindHost: "0.0.0.0",
     bindPort,
-    allowedChatId: forceRebind ? "" : existingChat ?? "",
+    allowedChatId: forceRebind ? "" : (existingChat ?? ""),
   };
   writeJsonFile(targetPath, target);
-
-  const username = me.username ?? "";
-  const botLink = username
-    ? `https://t.me/${username}?start=pair_${pairingId}`
-    : "(bot username not available)";
 
   if (jsonMode) {
     console.log(

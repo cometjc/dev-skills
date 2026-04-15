@@ -3,6 +3,10 @@ import { useKeyboard } from "@opentui/react";
 import React, { useEffect, useState } from "react";
 
 import { useTheme } from "../ThemeProvider.js";
+import {
+  buildPairingStepState,
+  type TelegramPairingStepState,
+} from "../../telegram/setup-flow.js";
 import { SingleLineTextInput } from "./SingleLineTextInput.js";
 
 export type TelegramWizardFunnelMode = "auto" | "off";
@@ -14,16 +18,21 @@ export interface TelegramWizardSubmitValues {
 }
 
 interface TelegramSetupWizardProps {
+  pairingState?: TelegramPairingStepState | null;
   onCancel: () => void;
   onError: (message: string) => void;
   onSubmit: (values: TelegramWizardSubmitValues) => Promise<void>;
 }
 
-type WizardStep = "token" | "funnel" | "webhook";
+type WizardStep = "token" | "funnel" | "webhook" | "pairing";
 
 const FUNNEL_CHOICES: TelegramWizardFunnelMode[] = ["auto", "off"];
 
+export { buildPairingStepState };
+export type { TelegramPairingStepState };
+
 export const TelegramSetupWizard = ({
+  pairingState,
   onCancel,
   onError,
   onSubmit,
@@ -31,7 +40,8 @@ export const TelegramSetupWizard = ({
   const { theme } = useTheme();
   const [step, setStep] = useState<WizardStep>("token");
   const [token, setToken] = useState("");
-  const [funnelMode, setFunnelMode] = useState<TelegramWizardFunnelMode>("auto");
+  const [funnelMode, setFunnelMode] =
+    useState<TelegramWizardFunnelMode>("auto");
   const [webhookUrl, setWebhookUrl] = useState("");
   const [funnelIndex, setFunnelIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
@@ -41,6 +51,12 @@ export const TelegramSetupWizard = ({
       setFunnelIndex(FUNNEL_CHOICES.indexOf(funnelMode));
     }
   }, [funnelMode, step]);
+
+  useEffect(() => {
+    if (pairingState) {
+      setStep("pairing");
+    }
+  }, [pairingState]);
 
   const submit = async (values: TelegramWizardSubmitValues) => {
     if (submitting) return;
@@ -106,8 +122,17 @@ export const TelegramSetupWizard = ({
       return;
     }
 
+    if (step === "pairing") {
+      if (key.name === "return") {
+        onCancel();
+      }
+      return;
+    }
+
     if (key.name === "up" || key.name === "left") {
-      setFunnelIndex((prev) => (prev === 0 ? FUNNEL_CHOICES.length - 1 : prev - 1));
+      setFunnelIndex((prev) =>
+        prev === 0 ? FUNNEL_CHOICES.length - 1 : prev - 1,
+      );
       return;
     }
 
@@ -140,7 +165,9 @@ export const TelegramSetupWizard = ({
       }}
     >
       <box style={{ marginBottom: 1 }}>
-        <text style={{ attributes: TextAttributes.BOLD, fg: theme.colors.focused }}>
+        <text
+          style={{ attributes: TextAttributes.BOLD, fg: theme.colors.focused }}
+        >
           Telegram 設定精靈
         </text>
       </box>
@@ -180,7 +207,9 @@ export const TelegramSetupWizard = ({
               <box key={choice} style={{ marginTop: index > 0 ? 1 : 0 }}>
                 <text
                   style={{
-                    attributes: isFocused ? TextAttributes.BOLD : TextAttributes.NONE,
+                    attributes: isFocused
+                      ? TextAttributes.BOLD
+                      : TextAttributes.NONE,
                     fg: isFocused ? theme.colors.focused : theme.colors.text,
                   }}
                 >
@@ -219,9 +248,65 @@ export const TelegramSetupWizard = ({
         </box>
       )}
 
+      {step === "pairing" && pairingState && (
+        <box style={{ flexDirection: "column" }}>
+          <box style={{ marginBottom: 1 }}>
+            <text style={{ attributes: TextAttributes.DIM }}>
+              {pairingState.statusMessage}
+            </text>
+          </box>
+          <box style={{ marginBottom: 1, flexDirection: "column" }}>
+            <text
+              style={{
+                attributes: TextAttributes.BOLD,
+                fg: theme.colors.focused,
+              }}
+            >
+              Bot Link
+            </text>
+            <text>{pairingState.botLink}</text>
+          </box>
+          <box style={{ marginBottom: 1, flexDirection: "column" }}>
+            <text
+              style={{
+                attributes: TextAttributes.BOLD,
+                fg: theme.colors.focused,
+              }}
+            >
+              PIN
+            </text>
+            <text>{pairingState.pin}</text>
+          </box>
+          {pairingState.expiresAt && (
+            <box style={{ marginBottom: 1 }}>
+              <text style={{ attributes: TextAttributes.DIM }}>
+                有效期限：{pairingState.expiresAt}
+              </text>
+            </box>
+          )}
+          {pairingState.warningMessage && (
+            <box style={{ marginBottom: 1 }}>
+              <text style={{ fg: theme.colors.warning }}>
+                {pairingState.warningMessage}
+              </text>
+            </box>
+          )}
+          <box style={{ marginTop: 1 }}>
+            <text style={{ attributes: TextAttributes.DIM }}>
+              完成配對後按 Enter / Esc 關閉
+            </text>
+          </box>
+        </box>
+      )}
+
       {submitting && (
         <box style={{ marginTop: 1 }}>
-          <text style={{ attributes: TextAttributes.BOLD, fg: theme.colors.pending }}>
+          <text
+            style={{
+              attributes: TextAttributes.BOLD,
+              fg: theme.colors.pending,
+            }}
+          >
             正在初始化 Telegram...
           </text>
         </box>
