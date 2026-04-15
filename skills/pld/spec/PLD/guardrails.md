@@ -11,10 +11,10 @@ Use this file to keep PLD execution predictable, low-conflict, and easy to revie
 - Every lane should run inside its own dedicated worktree.
 - Every lane item should create its own lane-item commit before review starts.
 - When a lane-local MVC step is done and verified, the default next action is to finalize that step into its own lane-item commit rather than batching additional completed MVC work into the same uncommitted state.
-- Distinguish commit ownership by context:
+- Distinguish commit ownership by context (see also `skills/pld/spec/PLD/canonical-contract.md`):
   - main agent direct local work: verify first, then commit directly
-  - PLD sub-agent lane work: default to `READY_TO_COMMIT`, and coordinator/main agent performs the commit
-  - self-commit by a sub-agent is an explicit exception, not the default
+  - PLD sub-agent lane work: default to `READY_TO_COMMIT`, and coordinator/main agent performs the lane-item commit after intake
+  - self-commit by a sub-agent is an explicit exception when the lane item explicitly allows it; otherwise coders hand off uncommitted work for coordinator commit
 - Do not assign the same file to two active implementer agents at the same time.
 - Every sub-agent must assume other agents are editing nearby code and must not revert unrelated changes.
 - A completed lane item is not considered integrated until the coordinator sees both spec review and code quality review pass on that lane-item diff.
@@ -24,7 +24,7 @@ Use this file to keep PLD execution predictable, low-conflict, and easy to revie
 - Keep the configured active subagent cap saturated whenever there are enough non-overlapping lane items.
 - Lane pool size may exceed the active cap; extra lanes should remain queued or parked rather than stealing a running slot.
 - When an active slot opens, promote the next eligible queued lane whose write set does not overlap any active lane.
-- When one lane reaches `quality PASS`, dispatch the next unchecked item from that same lane before doing batch tracking updates.
+- When one lane completes **both** review gates successfully (per `skills/pld/spec/PLD/canonical-contract.md`), dispatch the next unchecked item from that same lane before doing batch tracking updates.
 - Use the refill assistant to suggest the next unchecked lane-local item, but treat its output as a coordinator-side draft rather than automatic dispatch.
 - If refill work would overlap an active lane's ownership, do not dispatch it yet.
 - If the lane that freed a slot has no safe refill item, use the next queued lane rather than leaving the slot idle.
@@ -55,8 +55,8 @@ Use this file to keep PLD execution predictable, low-conflict, and easy to revie
   - a lane item is expected to end in a commit and the sub-agent may be waiting on a permission or confirmation prompt instead of actively coding
 - Treat `implementing` as stale when the lane journal still says `implementing`, but the lane worktree is clean and `HEAD` still matches `latestCommit`; in that case, scheduler/probe output should surface `stale-implementing` so coordinator can reassign or park the lane instead of counting it as an active slot.
 - Probe checklist:
-  - `node plugins/parallel-lane-dev/scripts/pld-probe-lane.cjs --execution <id> --lane <n>`
-  - or, if the helper is unavailable, fall back to:
+  - `node skills/pld/scripts/pld-tool.cjs --role coordinator audit --json` (execution snapshot) plus the lane-local verification command from the lane plan
+  - or, if tooling is unavailable, fall back to:
     - `git rev-parse --short HEAD`
     - `git status --short`
     - `git diff --stat`
@@ -95,13 +95,12 @@ Use this file to keep PLD execution predictable, low-conflict, and easy to revie
   - spec review
   - quality review
   - correction loop
-- Prefer `node plugins/parallel-lane-dev/scripts/pld-compose-message.cjs ...` to generate those templates consistently.
+- Prefer the template families in `skills/pld/spec/PLD/communication.md` (and canonical status rules in `skills/pld/spec/PLD/canonical-contract.md`) so coordinator messages stay aligned with executor state.
 - Those templates should ask for one strict lane handoff envelope JSON object on return, not a free-form PLD status paragraph.
 - If correction loops exceed 2 rounds, escalate to coordinator arbitration.
-- When coordinator records a new lane state after review, correction, or blockage, prefer `node plugins/parallel-lane-dev/scripts/pld-record-lane-state.cjs ...` over hand-editing journal JSON.
-- When a sub-agent suggests a remediation, or coordinator notices a workflow issue or optimization opportunity during execution, prefer `node plugins/parallel-lane-dev/scripts/pld-record-insight.cjs ...` over burying that observation only in thread history.
-- `pld-record-lane-state` and `pld-record-insight` are compatibility entrypoints. They should translate their input into the canonical envelope flow instead of bypassing the reducer/projection path.
-- Prefer `node plugins/parallel-lane-dev/scripts/pld-envelope.cjs ...` or reducer-backed helpers when adding new PLD automation, so the event log remains the only write interface.
+- When coordinator records a new lane state after review, correction, or blockage, do it through **`pld-tool` / executor state** (see `skills/pld/spec/PLD/canonical-contract.md`), not hand-edited lane journals or legacy plugin recorders.
+- When a sub-agent suggests a remediation, or coordinator notices a workflow issue or optimization opportunity during execution, capture it in **execution insights** via the coordinator workflow your repo documents—still backed by executor-visible records, not chat-only text.
+- Any legacy “record lane state / envelope / insight” helper scripts must target the same canonical envelope rules in `skills/pld/spec/PLD/canonical-contract.md` so the SQLite event log remains the only write interface.
 - When work is during or after an PLD stage and the prompt includes `review`, coordinator should also inspect the execution insights journal and decide whether any open/adopted insight needs planning, graduation into tracked spec/lessons, or closure alongside the normal lane review work.
 - When coordinator needs a refreshed scoreboard snapshot, prefer `npm run pld:scoreboard:refresh` and inspect `PLD/state/scoreboard.runtime.md` rather than staging runtime churn from the tracked scoreboard.
 - When coordinator changes the active/parked lane set for an execution, prefer `npm run pld:active-set:replan -- --execution <id> --active ... --parked ...` so tracked `Phase` values and lane journals stay aligned.
@@ -111,7 +110,7 @@ Use this file to keep PLD execution predictable, low-conflict, and easy to revie
 - When implementers hand back `READY_TO_COMMIT`, prefer `npm run pld:intake -- --execution <id> [--lane <n>]` before creating the commit. The intake helper should surface the proposed commit title/body, completed verification, scope, and note so the coordinator can commit without another clarification round.
 - When coordinator wants one low-judgment pass that combines launch, review, and commit-intake visibility, prefer `npm run pld:autopilot -- --execution <id>`. The autopilot helper should not dispatch tools by itself, but it should return the full coordinator-ready snapshot for this round.
 - When main agent wants the exact execution order for this round, prefer `npm run pld:dispatch-plan -- --execution <id>`. The dispatch-plan helper should prioritize commit intake first, then review/correction work, then new launch assignments, and it should not invent a separate source of truth beyond the coordinator loop output.
-- When execution insights exist, prefer `node plugins/parallel-lane-dev/scripts/pld-summarize-insights.cjs --execution <id>` before or during review/autopilot work so open execution-local insights, adopted durable learnings, and resolved history stay visible in the right bucket.
+- When execution insights exist, summarize them in the coordinator review pass (or via project-local npm helpers) so open execution-local insights, adopted durable learnings, and resolved history stay visible in the right bucket—without bypassing executor state in `skills/pld/spec/PLD/canonical-contract.md`.
 - Implementer assignments for PLD sub-agents should tell them not to run `git commit` themselves unless the lane explicitly says self-commit is allowed. The default end state is `READY_TO_COMMIT` with verification results and commit-ready handoff details.
 - Do not keep a completed MVC step uncommitted just because the lane may continue later; later refill items should start from the committed lane state, not from piled-up local progress.
 

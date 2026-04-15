@@ -16,6 +16,7 @@ Use this skill to run parallel-lane execution with strict state authority in `pl
 ## Core principles
 
 - Writable execution truth is only `.pld/executor.sqlite` via `pld-tool`.
+- **Canonical status vocabulary** (implementer and reviewer `report-result` values, lane phases, gate order, and error semantics) lives in `skills/pld/spec/PLD/canonical-contract.md`. This skill describes mechanics only and does not redefine those tokens.
 - Main Agent is coordinator and the only actor that performs final integration/merge.
 - `pld-coder` and `pld-reviewer` report state through `report-result`; they do not manage global routing policy.
 - Do not treat chat, lane markdown, or scoreboard files as authoritative state.
@@ -44,8 +45,8 @@ Default role is worker; coordinator must be explicit.
 1. Coordinator runs `import-plans` (if needed), then `audit --json`, then `go`.
 2. For each dispatchable lane, provision/verify worktree before coder spawn.
 3. Spawn `pld-coder` for one lane item, coder claims assignment, implements, verifies, reports result.
-4. Spawn `pld-reviewer` for spec gate; if failed, coder fixes and a new reviewer re-runs gate.
-5. Spawn `pld-reviewer` for quality gate; if failed, same fix/re-review loop.
+4. Spawn `pld-reviewer` for the first review gate defined in `skills/pld/spec/PLD/canonical-contract.md`; if failed, coder fixes and a new reviewer re-runs that gate.
+5. Spawn `pld-reviewer` for the second review gate; if failed, same fix/re-review loop.
 6. After macro steps, coordinator batch-syncs with `audit --json` and refills next items.
 7. Coordinator performs final merge/integration when policy gates are satisfied.
 
@@ -53,7 +54,7 @@ Default role is worker; coordinator must be explicit.
 
 - One active coder per lane item/worktree.
 - Review always uses fresh reviewer subagent context.
-- If the same lane fails spec/quality repeatedly, escalate via AUQ policy defined by `do`.
+- If the same lane fails consecutive review gates (per `skills/pld/spec/PLD/canonical-contract.md`), escalate via AUQ policy defined by `do`.
 - Keep global throughput by continuing independent lanes while blocked slices wait for AUQ answers.
 
 ## Integration with `/do`
@@ -72,6 +73,7 @@ Default role is worker; coordinator must be explicit.
   - `pld-coder.md`
   - `pld-reviewer.md`
 - Operating references: `skills/pld/spec/PLD/`
+  - `canonical-contract.md`
   - `communication.md`
   - `guardrails.md`
   - `operating-rules.md`
@@ -90,3 +92,7 @@ Default role is worker; coordinator must be explicit.
 - `report-result` transitions for coder/spec/quality outcomes.
 - Escalation events (if any) and AUQ session linkage.
 - Final integration evidence by coordinator only.
+
+## References
+
+- [PLD canonical contract](spec/PLD/canonical-contract.md) — authoritative `report-result` status vocabulary and reviewer/implementer expectations.

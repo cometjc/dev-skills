@@ -19,6 +19,8 @@
 
 ## Allowed Status Values
 
+These are **normalized executor / handoff statuses** (what `report-result` persists). The exact set, spelling, and allowed transitions are specified in `skills/pld/spec/PLD/canonical-contract.md`; the list below is a non-authoritative summary for readers.
+
 - `RUNNING`
 - `BLOCKED`
 - `READY_TO_COMMIT` — implementer finished and verified; coordinator should create the lane-item commit (default PLD flow).
@@ -26,6 +28,11 @@
 - `DONE`
 - `FAILED`
 - `CANCELLED`
+
+## Canonical contract vs review narrative
+
+- **Executor status** (`report-result --status`, lane `result_status`, phase hints) must use tokens from `skills/pld/spec/PLD/canonical-contract.md` only.
+- **Review templates** may still say “PASS” or “FAIL” in prose to describe findings for the coordinator; that wording is a *review outcome summary*, not an alternate status system. The reviewer still records the canonical `--status` value that matches the gate result.
 
 ## Required Phase Hint
 
@@ -82,7 +89,7 @@
 
 ## Coordinator Templates
 
-These templates may be generated through `node plugins/parallel-lane-dev/scripts/pld-compose-message.cjs ...`, but the coordinator still decides when and how to send them.
+Generate coordinator-facing text from the template families in this document (or project-local npm helpers, if your repo wires them). Do **not** reference deprecated PLD shell paths from the pre-skills plugin layout; state changes belong in `.pld/executor.sqlite` via `node skills/pld/scripts/pld-tool.cjs` per `skills/pld/spec/PLD/canonical-contract.md`.
 
 - When coordinator wants to collapse "reconcile stale lanes + promote next lanes + generate implementer-assignment text" into one deterministic pass, prefer `npm run pld:launch -- --execution <id>`. The launch helper should reuse the same implementer-assignment template rather than inventing a second dispatch wording.
 - When coordinator wants to collapse "inspect current review phases + decide the next spec/quality/correction/coordinator-commit step" into one deterministic pass, prefer `npm run pld:review -- --execution <id>`. The review helper should emit the same template families already defined below, not invent a separate review wording.

@@ -158,6 +158,8 @@ Apply the first matching route and stop.
 
 Use these templates when route (3.b) or (3.d independent) selects `pld`.
 
+**Canonical vocabulary:** executor `report-result` statuses, lane phases, and review-gate ordering are defined only in `skills/pld/spec/PLD/canonical-contract.md` (not duplicated here). If this skill and the contract disagree, follow the contract and update this routing doc.
+
 Set `PLD_TOOL_CMD` to the project-valid command first.
 
 - bundled skill example: `PLD_TOOL_CMD="node skills/pld/scripts/pld-tool.cjs"`
@@ -174,8 +176,7 @@ Set `PLD_TOOL_CMD` to the project-valid command first.
 - `$PLD_TOOL_CMD --role coder report-result --execution <id> --lane "<Lane N>" --status <status> --summary "<short summary>" --json`
 
 **Reviewer gate cycle (fresh reviewer subagent each gate)**
-- spec gate: `$PLD_TOOL_CMD --role reviewer report-result --execution <id> --lane "<Lane N>" --status <spec_pass|spec_fail> --summary "<review outcome>" --json`
-- quality gate: `$PLD_TOOL_CMD --role reviewer report-result --execution <id> --lane "<Lane N>" --status <quality_pass|quality_fail> --summary "<review outcome>" --json`
+- For each review gate (spec compliance, then code quality), run `$PLD_TOOL_CMD --role reviewer report-result ...` using the **reviewer `--status` tokens** named in `skills/pld/spec/PLD/canonical-contract.md` (and accepted by this repo’s `pld-tool` build). Put the human-readable PASS/FAIL rationale in `--verification-summary` / payload fields as required by your lane prompt — do **not** treat narrative “pass/fail” wording as a second canonical status system.
 - on fail: coder fixes and reports; then spawn a new reviewer for re-review.
 
 **Batch synchronization cadence**
@@ -183,7 +184,7 @@ Set `PLD_TOOL_CMD` to the project-valid command first.
 - avoid tight polling loops; use batch snapshots for orchestration decisions.
 
 **Escalation trigger**
-- if the same lane reaches 3 consecutive spec/quality failures, raise AUQ escalation and mark affected slices blocked until recovery decision arrives.
+- if the same lane reaches 3 consecutive review-gate failures (per `skills/pld/spec/PLD/canonical-contract.md`), raise AUQ escalation and mark affected slices blocked until recovery decision arrives.
 
 ### E. Verification, Feedback, and Completion
 
@@ -280,7 +281,7 @@ Validate routing behavior with these checks:
 - (6) path B (3.e, 3.h) key decisions -> AUQ tool used (no plain-chat substitution)
 - (6) path B approach choice -> A/B/C recommendation selected via AUQ
 - `pld` non-blocking AUQ -> pending answer blocks only affected slices while independent lanes keep running
-- `pld` escalation policy -> same lane spec/quality failures escalate after 3 consecutive failures
+- `pld` escalation policy -> same lane review-gate failures escalate after 3 consecutive failures (see `skills/pld/spec/PLD/canonical-contract.md`)
 - (15) base-branch detection -> base branch auto-detected from `origin/HEAD` or repository policy fallback
 - (15) post-plan cleanup gate -> cleanup is blocked when commits are not yet on base branch
 - (15) defer-integration exception -> status set to `implemented_not_integrated` and cleanup skipped
@@ -319,7 +320,7 @@ Use these concrete scenarios to validate route, AUQ continuity, and PLD recovery
    - Evidence: answered payload summary + resumed lane ids + next `audit --json` delta.
 
 6. **lane failure escalation at 3 consecutive failures**
-   - Trigger: same lane fails spec/quality review repeatedly.
+   - Trigger: same lane fails consecutive review gates (per gate ordering in `skills/pld/spec/PLD/canonical-contract.md`).
    - Expected: attempts 1-2 remain auto-repair; attempt 3 escalates to AUQ decision gate.
    - Evidence:
      - lane failure counter trail (`attempt=1`, `attempt=2`, `attempt=3`)
@@ -368,4 +369,5 @@ Use these minimum commands when validating routing and post-plan gates:
 
 - [Ask Me Skill](../ask-me/SKILL.md)
 - [PLD Skill](../pld/SKILL.md)
+- [PLD canonical contract](../pld/spec/PLD/canonical-contract.md)
 - [Worktree Recovery](references/worktree-recovery.md)
