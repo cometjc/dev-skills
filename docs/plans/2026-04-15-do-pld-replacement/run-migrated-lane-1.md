@@ -1,6 +1,6 @@
 # Lane 1 - Canonical Contract Foundation
 
-PLD worktree: `docs/plans/do-pld-strict-canonical/run-migrated-lane-1`
+PLD worktree: `docs/plans/2026-04-15-do-pld-replacement/run-migrated-lane-1`
 
 > Ownership family:
 > `skills/pld/spec/PLD/canonical-contract.md`

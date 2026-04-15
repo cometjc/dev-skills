@@ -1,6 +1,6 @@
 # Lane 2 - Do/PLD Governance Doc Alignment
 
-PLD worktree: `docs/plans/do-pld-strict-canonical/run-migrated-lane-2`
+PLD worktree: `docs/plans/2026-04-15-do-pld-replacement/run-migrated-lane-2`
 
 > Ownership family:
 > `skills/do/SKILL.md`
