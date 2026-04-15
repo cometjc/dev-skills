@@ -55,6 +55,257 @@ function runSqlRows(projectRoot, sql) {
   return output.split('\n').map((line) => line.split('\t'));
 }
 
+/** Canonical `report-result` status values (strict; legacy aliases rejected). */
+const CANONICAL_RESULT_STATUSES = new Set([
+  'RUNNING',
+  'BLOCKED',
+  'READY_TO_COMMIT',
+  'READY_FOR_REVIEW',
+  'DONE',
+  'FAILED',
+  'CANCELLED',
+]);
+
+const IMPLEMENTER_LIKE_PHASES = new Set([
+  'queued',
+  'implementing',
+  'blocked',
+  'refill-ready',
+  'parked',
+  'lane-ready',
+]);
+
+const IMPLEMENTER_ALLOWED_STATUSES = new Set([
+  'RUNNING',
+  'BLOCKED',
+  'READY_TO_COMMIT',
+  'READY_FOR_REVIEW',
+  'FAILED',
+  'CANCELLED',
+]);
+
+const REVIEW_PENDING_ALLOWED = new Set(['DONE', 'FAILED', 'CANCELLED']);
+
+const COORDINATOR_COMMIT_PENDING_ALLOWED = new Set(['READY_FOR_REVIEW', 'DONE', 'FAILED', 'CANCELLED']);
+
+class PldToolError extends Error {
+  constructor({code, message, expected = null, received = null, hint = null, category = 'contract'}) {
+    super(message);
+    this.name = 'PldToolError';
+    this.code = code;
+    this.expected = expected;
+    this.received = received;
+    this.hint = hint;
+    this.category = category;
+  }
+}
+
+function createPldToolError(fields) {
+  return new PldToolError(fields);
+}
+
+function exitCodeForPldError(error) {
+  if (!(error instanceof PldToolError)) {
+    return 1;
+  }
+  if (error.category === 'acl') {
+    return 3;
+  }
+  if (error.category === 'context') {
+    return 4;
+  }
+  return 2;
+}
+
+function structuredErrorShape(error) {
+  if (!(error instanceof PldToolError)) {
+    return null;
+  }
+  return {
+    code: error.code,
+    message: error.message,
+    expected: error.expected,
+    received: error.received,
+    hint: error.hint,
+  };
+}
+
+function validateCanonicalResultStatus(status) {
+  if (typeof status !== 'string' || !status.trim()) {
+    throw createPldToolError({
+      code: 'E_FIELD_REQUIRED',
+      message: 'report-result status is required and must be a non-empty string.',
+      expected: [...CANONICAL_RESULT_STATUSES].sort(),
+      received: status,
+      hint: 'Use a canonical status from the PLD contract (see skills/pld/spec/PLD/).',
+      category: 'contract',
+    });
+  }
+  const trimmed = status.trim();
+  if (!CANONICAL_RESULT_STATUSES.has(trimmed)) {
+    throw createPldToolError({
+      code: 'E_STATUS_INVALID',
+      message: `Unknown or non-canonical result status "${trimmed}".`,
+      expected: [...CANONICAL_RESULT_STATUSES].sort(),
+      received: trimmed,
+      hint: 'Legacy aliases (for example spec_pass) are not accepted.',
+      category: 'contract',
+    });
+  }
+  return trimmed;
+}
+
+function validateReportResultPayload(payload) {
+  const value = payload == null ? {} : payload;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw createPldToolError({
+      code: 'E_PAYLOAD_INVALID',
+      message: 'report-result payload must be a plain object.',
+      expected: ['verificationSummary (optional)'],
+      received: typeof value,
+      category: 'contract',
+    });
+  }
+  const keys = Object.keys(value);
+  const allowed = new Set(['verificationSummary']);
+  const unknown = keys.filter((key) => !allowed.has(key));
+  if (unknown.length > 0) {
+    throw createPldToolError({
+      code: 'E_PAYLOAD_INVALID',
+      message: 'report-result payload contains unknown fields.',
+      expected: [...allowed],
+      received: unknown,
+      hint: 'Remove legacy keys; only verificationSummary is allowed.',
+      category: 'contract',
+    });
+  }
+  return value;
+}
+
+function validateReportResultTransition(lanePhase, status) {
+  const phase = lanePhase == null ? '' : String(lanePhase);
+  if (phase === 'review-pending') {
+    if (!REVIEW_PENDING_ALLOWED.has(status)) {
+      throw createPldToolError({
+        code: 'E_TRANSITION_INVALID',
+        message: `Result status "${status}" is not allowed when the lane phase is review-pending.`,
+        expected: [...REVIEW_PENDING_ALLOWED],
+        received: status,
+        hint: 'From review-pending, use DONE, FAILED, or CANCELLED.',
+        category: 'contract',
+      });
+    }
+    return;
+  }
+  if (phase === 'coordinator-commit-pending') {
+    if (!COORDINATOR_COMMIT_PENDING_ALLOWED.has(status)) {
+      throw createPldToolError({
+        code: 'E_TRANSITION_INVALID',
+        message: `Result status "${status}" is not allowed when the lane phase is coordinator-commit-pending.`,
+        expected: [...COORDINATOR_COMMIT_PENDING_ALLOWED],
+        received: status,
+        category: 'contract',
+      });
+    }
+    return;
+  }
+  if (phase === 'done') {
+    throw createPldToolError({
+      code: 'E_TRANSITION_INVALID',
+      message: 'Cannot report a new result when the lane phase is already done.',
+      expected: [],
+      received: status,
+      hint: 'The lane is terminal; no further report-result calls are valid.',
+      category: 'contract',
+    });
+  }
+  if (phase === 'failed') {
+    throw createPldToolError({
+      code: 'E_TRANSITION_INVALID',
+      message: 'Cannot report a new result when the lane phase is failed.',
+      expected: [],
+      received: status,
+      category: 'contract',
+    });
+  }
+  if (IMPLEMENTER_LIKE_PHASES.has(phase)) {
+    if (!IMPLEMENTER_ALLOWED_STATUSES.has(status)) {
+      throw createPldToolError({
+        code: 'E_TRANSITION_INVALID',
+        message: `Result status "${status}" is not allowed for the current lane phase "${phase}".`,
+        expected: [...IMPLEMENTER_ALLOWED_STATUSES],
+        received: status,
+        hint: 'Implementer lanes cannot jump to DONE; use READY_TO_COMMIT or READY_FOR_REVIEW as appropriate.',
+        category: 'contract',
+      });
+    }
+    return;
+  }
+  if (!CANONICAL_RESULT_STATUSES.has(status)) {
+    throw createPldToolError({
+      code: 'E_STATUS_INVALID',
+      message: `Unknown result status "${status}".`,
+      expected: [...CANONICAL_RESULT_STATUSES].sort(),
+      received: status,
+      category: 'contract',
+    });
+  }
+}
+
+function getLanePhase(projectRoot, execution, lane) {
+  ensureExecutorDb(projectRoot);
+  const row = runSql(
+    projectRoot,
+    `select phase from lanes where execution_name = ${sqliteEscape(execution)} and lane_name = ${sqliteEscape(lane)} limit 1;`,
+  );
+  return row || null;
+}
+
+function validateReportResultArgs(projectRoot, execution, lane, status, resultBranch, payload = {}) {
+  if (typeof execution !== 'string' || !execution.trim()) {
+    throw createPldToolError({
+      code: 'E_FIELD_REQUIRED',
+      message: 'execution must be a non-empty string.',
+      expected: ['non-empty execution id'],
+      received: execution,
+      category: 'contract',
+    });
+  }
+  if (typeof lane !== 'string' || !lane.trim()) {
+    throw createPldToolError({
+      code: 'E_FIELD_REQUIRED',
+      message: 'lane must be a non-empty string.',
+      expected: ['non-empty lane label'],
+      received: lane,
+      category: 'contract',
+    });
+  }
+  if (typeof resultBranch !== 'string' || !resultBranch.trim()) {
+    throw createPldToolError({
+      code: 'E_FIELD_REQUIRED',
+      message: 'result-branch must be a non-empty string.',
+      expected: ['git branch name'],
+      received: resultBranch,
+      category: 'contract',
+    });
+  }
+  const canonicalStatus = validateCanonicalResultStatus(status);
+  const safePayload = validateReportResultPayload(payload);
+  const phase = getLanePhase(projectRoot, execution.trim(), lane.trim());
+  if (phase == null || phase === '') {
+    throw createPldToolError({
+      code: 'E_LANE_UNKNOWN',
+      message: `Unknown lane ${execution} ${lane}.`,
+      expected: ['existing execution_name and lane_name in executor DB'],
+      received: {execution: execution.trim(), lane: lane.trim()},
+      hint: 'Run import-plans (coordinator) so lanes exist, or fix --execution / --lane.',
+      category: 'context',
+    });
+  }
+  validateReportResultTransition(phase, canonicalStatus);
+  return {canonicalStatus, safePayload};
+}
+
 function ensureExecutorDb(projectRoot = resolveProjectRoot()) {
   runSql(
     projectRoot,
@@ -851,7 +1102,14 @@ limit 1;
     `,
   );
   if (!laneJson) {
-    throw new Error(`Unknown lane ${execution} ${lane}`);
+    throw createPldToolError({
+      code: 'E_LANE_UNKNOWN',
+      message: `Unknown lane ${execution} ${lane}.`,
+      expected: ['existing execution_name and lane_name in executor DB'],
+      received: {execution, lane},
+      hint: 'Run import-plans (coordinator) so lanes exist, or fix --execution / --lane.',
+      category: 'context',
+    });
   }
   const assignment = JSON.parse(laneJson);
   runSql(
@@ -890,6 +1148,8 @@ function mapResultStatusToLanePhase(status) {
       return 'implementing';
     case 'BLOCKED':
       return 'blocked';
+    case 'READY_TO_COMMIT':
+      return 'coordinator-commit-pending';
     case 'READY_FOR_REVIEW':
       return 'review-pending';
     case 'DONE':
@@ -899,7 +1159,13 @@ function mapResultStatusToLanePhase(status) {
     case 'CANCELLED':
       return 'parked';
     default:
-      throw new Error(`Unknown result status ${status}`);
+      throw createPldToolError({
+        code: 'E_STATUS_INVALID',
+        message: `Unknown result status ${status}.`,
+        expected: [...CANONICAL_RESULT_STATUSES].sort(),
+        received: status,
+        category: 'contract',
+      });
   }
 }
 
@@ -911,6 +1177,14 @@ function reportResult(
   resultBranch,
   payload = {},
 ) {
+  const {canonicalStatus, safePayload} = validateReportResultArgs(
+    projectRoot,
+    execution,
+    lane,
+    status,
+    resultBranch,
+    payload,
+  );
   ensureExecutorDb(projectRoot);
   const now = new Date().toISOString();
   runSql(
@@ -928,18 +1202,18 @@ insert into lane_results (
 values (
   ${sqliteEscape(execution)},
   ${sqliteEscape(lane)},
-  ${sqliteEscape(status)},
+  ${sqliteEscape(canonicalStatus)},
   ${sqliteEscape(resultBranch)},
-  ${sqliteEscape(payload.verificationSummary || null)},
-  ${sqliteEscape(JSON.stringify(payload))},
+  ${sqliteEscape(safePayload.verificationSummary ?? null)},
+  ${sqliteEscape(JSON.stringify(safePayload))},
   ${sqliteEscape(now)}
 );
 update lanes
-set phase = ${sqliteEscape(mapResultStatusToLanePhase(status))},
-    result_status = ${sqliteEscape(status)}
+set phase = ${sqliteEscape(mapResultStatusToLanePhase(canonicalStatus))},
+    result_status = ${sqliteEscape(canonicalStatus)}
 where execution_name = ${sqliteEscape(execution)} and lane_name = ${sqliteEscape(lane)};
 update lane_assignments
-set assignment_status = ${sqliteEscape(status.toLowerCase())},
+set assignment_status = ${sqliteEscape(canonicalStatus.toLowerCase())},
     updated_at = ${sqliteEscape(now)}
 where execution_name = ${sqliteEscape(execution)} and lane_name = ${sqliteEscape(lane)};
     `,
@@ -947,9 +1221,9 @@ where execution_name = ${sqliteEscape(execution)} and lane_name = ${sqliteEscape
   return {
     execution,
     lane,
-    status,
+    status: canonicalStatus,
     resultBranch,
-    verificationSummary: payload.verificationSummary || null,
+    verificationSummary: safePayload.verificationSummary ?? null,
   };
 }
 
@@ -961,15 +1235,24 @@ module.exports = {
   buildReviewLoopFromExecutor,
   buildScheduleFromExecutor,
   auditExecutor,
+  CANONICAL_RESULT_STATUSES,
   claimAssignment,
+  createPldToolError,
   ensureExecutorDb,
+  exitCodeForPldError,
   goExecutor,
   hasExecutorDb,
   importLegacyExecutionState,
   importPlanFiles,
   listExecutionNames,
   listLanes,
+  PldToolError,
   reportResult,
   resolveExecutorDbPath,
+  structuredErrorShape,
   suggestRefillFromExecutor,
+  validateCanonicalResultStatus,
+  validateReportResultArgs,
+  validateReportResultPayload,
+  validateReportResultTransition,
 };
