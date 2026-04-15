@@ -4,6 +4,7 @@ import { dirname, join } from "path";
 
 export interface PendingPairing {
   attemptsLeft: number;
+  botLink?: string;
   expiresAt: string;
   id: string;
   pin: string;
@@ -56,7 +57,30 @@ export function putPendingPairing(pairing: PendingPairing): void {
   writePairings(data);
 }
 
-export function consumePairingByPin(pin: string, chatId: string): {
+export function findPendingPairingByTargetConfigFile(
+  targetConfigFile: string,
+): PendingPairing | null {
+  const data = readPairings();
+  const now = Date.now();
+  data.entries = data.entries.filter(
+    (entry) => new Date(entry.expiresAt).getTime() > now,
+  );
+  writePairings(data);
+
+  for (let index = data.entries.length - 1; index >= 0; index -= 1) {
+    const entry = data.entries[index];
+    if (entry.targetConfigFile === targetConfigFile) {
+      return entry;
+    }
+  }
+
+  return null;
+}
+
+export function consumePairingByPin(
+  pin: string,
+  chatId: string,
+): {
   message: string;
   ok: boolean;
 } {
@@ -85,7 +109,7 @@ export function consumePairingByPin(pin: string, chatId: string): {
 
   const targetPath = entry.targetConfigFile;
   const currentConfig = existsSync(targetPath)
-    ? JSON.parse(readFileSync(targetPath, "utf8")) as Record<string, unknown>
+    ? (JSON.parse(readFileSync(targetPath, "utf8")) as Record<string, unknown>)
     : {};
 
   const telegram =
@@ -93,7 +117,11 @@ export function consumePairingByPin(pin: string, chatId: string): {
       ? { ...(currentConfig.telegram as Record<string, unknown>) }
       : {};
 
-  if (typeof telegram.allowedChatId === "string" && telegram.allowedChatId && telegram.allowedChatId !== chatId) {
+  if (
+    typeof telegram.allowedChatId === "string" &&
+    telegram.allowedChatId &&
+    telegram.allowedChatId !== chatId
+  ) {
     return { ok: false, message: "已綁定其他 chat，請使用 rebind" };
   }
 

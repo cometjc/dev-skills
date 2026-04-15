@@ -7,12 +7,22 @@ import { t } from "../../i18n/index.js";
 import { ResponseFormatter } from "../../session/ResponseFormatter.js";
 import { SessionManager } from "../../session/SessionManager.js";
 import { getSessionDirectory } from "../../session/utils.js";
-import { loadConfig } from "../../config/ConfigLoader.js";
+import { getConfigPaths, loadConfig } from "../../config/ConfigLoader.js";
 import { runConfigCommand } from "../../cli/commands/config.js";
+import {
+  buildPairingStepState,
+  isTelegramConfigured as isTelegramConfiguredState,
+  resolvePendingPairingStepState,
+  type TelegramPairingStepState,
+} from "../../telegram/setup-flow.js";
 import { useTheme } from "../ThemeProvider.js";
 import { useConfig } from "../ConfigContext.js";
 import { useTerminalDimensions } from "../hooks/useTerminalDimensions.js";
-import type { Answer, FocusContext, SessionUIState } from "../../tui/shared/types.js";
+import type {
+  Answer,
+  FocusContext,
+  SessionUIState,
+} from "../../tui/shared/types.js";
 import { isRecommendedOption } from "../../tui/shared/utils/recommended.js";
 import { KEYS } from "../../tui/constants/keybindings.js";
 import { ConfirmationDialog } from "./ConfirmationDialog.js";
@@ -21,7 +31,9 @@ import { ReviewScreen } from "./ReviewScreen.js";
 import { Toast as _Toast } from "./Toast.js";
 import { TelegramSetupWizard as _TelegramSetupWizard } from "./TelegramSetupWizard.js";
 
-type AnyFC<P = Record<string, unknown>> = (props: P) => React.ReactElement | null;
+type AnyFC<P = Record<string, unknown>> = (
+  props: P,
+) => React.ReactElement | null;
 const Toast = _Toast as unknown as AnyFC<React.ComponentProps<typeof _Toast>>;
 const TelegramSetupWizard = _TelegramSetupWizard as unknown as AnyFC<
   React.ComponentProps<typeof _TelegramSetupWizard>
@@ -50,18 +62,22 @@ export type TelegramShortcutOutcome = "ignore" | "setup" | "toggle";
 
 export function isTelegramConfigured(telegram: {
   enabled?: boolean;
+  tokenEnvKey?: string;
   webhookUrl?: string;
   allowedChatId?: string;
 }): boolean {
-  return (
-    (telegram.webhookUrl?.trim().length ?? 0) > 0 ||
-    (telegram.allowedChatId?.trim().length ?? 0) > 0
-  );
+  return isTelegramConfiguredState({
+    allowedChatId: telegram.allowedChatId ?? "",
+    enabled: telegram.enabled ?? false,
+    tokenEnvKey: telegram.tokenEnvKey ?? "AUQ_TELEGRAM_BOT_TOKEN",
+    webhookUrl: telegram.webhookUrl ?? "",
+  });
 }
 
 export function getTelegramShortcutOutcome(
   telegram: {
     enabled?: boolean;
+    tokenEnvKey?: string;
     webhookUrl?: string;
     allowedChatId?: string;
   },
@@ -102,9 +118,7 @@ export function buildTelegramInitCommandArgs(
   return args;
 }
 
-export function buildTelegramToggleCommandArgs(
-  nextEnabled: boolean,
-): string[] {
+export function buildTelegramToggleCommandArgs(nextEnabled: boolean): string[] {
   return ["set", "telegram.enabled", String(nextEnabled)];
 }
 
@@ -125,6 +139,45 @@ async function runConfigCommandExpectSuccess(args: string[]): Promise<void> {
   if (failed) {
     throw new Error(`Config command failed: ${args.join(" ")}`);
   }
+}
+
+interface TelegramInitResult {
+  botLink?: string;
+  pin?: string;
+  expiresAt?: string;
+}
+
+async function runTelegramInitAndParseResult(
+  args: string[],
+): Promise<TelegramInitResult> {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    const line = values
+      .map((value) =>
+        typeof value === "string" ? value : JSON.stringify(value),
+      )
+      .join(" ");
+    logs.push(line);
+  };
+
+  try {
+    await runConfigCommandExpectSuccess([...args, "--json"]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  for (let i = logs.length - 1; i >= 0; i -= 1) {
+    const line = logs[i];
+    if (!line) continue;
+    try {
+      const parsed = JSON.parse(line) as TelegramInitResult;
+      return parsed;
+    } catch {
+      // Keep scanning.
+    }
+  }
+  return {};
 }
 
 /**
@@ -173,14 +226,18 @@ export const StepperView: React.FC<StepperViewProps> = ({
   );
   const [telegramShortcutState, setTelegramShortcutState] = useState({
     enabled: config.telegram.enabled,
+    tokenEnvKey: config.telegram.tokenEnvKey,
     webhookUrl: config.telegram.webhookUrl,
     allowedChatId: config.telegram.allowedChatId,
   });
   const [showTelegramWizard, setShowTelegramWizard] = useState(false);
+  const [telegramPairingState, setTelegramPairingState] =
+    useState<TelegramPairingStepState | null>(null);
   const [telegramToast, setTelegramToast] = useState<{
     message: string;
     type: "success" | "error" | "warning";
   } | null>(null);
+  const telegramTargetConfigFile = useMemo(() => getConfigPaths().local, []);
 
   const safeIndex = Math.min(
     currentQuestionIndex,
@@ -189,9 +246,12 @@ export const StepperView: React.FC<StepperViewProps> = ({
   const currentQuestion = sessionRequest.questions[safeIndex];
   const isQuestionMultiSelect = (questionIndex: number): boolean => {
     const question = sessionRequest.questions[questionIndex];
-    return Boolean(question?.multiSelect || forceMultiByQuestion.has(questionIndex));
+    return Boolean(
+      question?.multiSelect || forceMultiByQuestion.has(questionIndex),
+    );
   };
-  const currentQuestionMultiSelect = isQuestionMultiSelect(currentQuestionIndex);
+  const currentQuestionMultiSelect =
+    isQuestionMultiSelect(currentQuestionIndex);
   const sessionCreatedAt = useMemo(() => {
     const parsed = Date.parse(sessionRequest.timestamp);
     return Number.isNaN(parsed) ? Date.now() : parsed;
@@ -311,7 +371,9 @@ export const StepperView: React.FC<StepperViewProps> = ({
         ...existing,
         customText: text,
         // Single-choice: clear selectedOption when typing custom text
-        ...(text.trim().length > 0 && !isMultiSelect ? { selectedOption: undefined } : {}),
+        ...(text.trim().length > 0 && !isMultiSelect
+          ? { selectedOption: undefined }
+          : {}),
       });
       return newAnswers;
     });
@@ -341,12 +403,14 @@ export const StepperView: React.FC<StepperViewProps> = ({
     setTelegramEnabled(config.telegram.enabled);
     setTelegramShortcutState({
       enabled: config.telegram.enabled,
+      tokenEnvKey: config.telegram.tokenEnvKey,
       webhookUrl: config.telegram.webhookUrl,
       allowedChatId: config.telegram.allowedChatId,
     });
   }, [
     config.telegram.allowedChatId,
     config.telegram.enabled,
+    config.telegram.tokenEnvKey,
     config.telegram.webhookUrl,
   ]);
 
@@ -355,31 +419,65 @@ export const StepperView: React.FC<StepperViewProps> = ({
     setTelegramEnabled(refreshed.telegram.enabled);
     setTelegramShortcutState({
       enabled: refreshed.telegram.enabled,
+      tokenEnvKey: refreshed.telegram.tokenEnvKey,
       webhookUrl: refreshed.telegram.webhookUrl,
       allowedChatId: refreshed.telegram.allowedChatId,
     });
+    if (isTelegramConfigured(refreshed.telegram)) {
+      setTelegramPairingState(null);
+    }
     onTelegramConfigChanged?.();
+  };
+
+  const openTelegramWizard = () => {
+    const latest = loadConfig();
+    setTelegramPairingState(
+      resolvePendingPairingStepState(latest.telegram, telegramTargetConfigFile),
+    );
+    setShowTelegramWizard(true);
   };
 
   const handleTelegramInit = async (
     values: TelegramInitCommandValues,
   ): Promise<void> => {
     try {
-      await runConfigCommandExpectSuccess(
+      const initResult = await runTelegramInitAndParseResult(
         buildTelegramInitCommandArgs(values),
       );
       refreshTelegramState();
-      setShowTelegramWizard(false);
 
       const refreshed = loadConfig();
       const hasWebhook = refreshed.telegram.webhookUrl.trim().length > 0;
-      setTelegramToast({
-        message:
-          values.funnelMode === "auto" && !hasWebhook
-            ? "Telegram 已初始化，但 Funnel 尚未成功，已進入 pairing-only 模式"
-            : "Telegram 已完成設定",
-        type: values.funnelMode === "auto" && !hasWebhook ? "warning" : "success",
-      });
+      if (initResult.botLink && initResult.pin) {
+        setTelegramPairingState(
+          buildPairingStepState({
+            botLink: initResult.botLink,
+            expiresAt: initResult.expiresAt,
+            funnelMode: values.funnelMode,
+            hasWebhook,
+            pin: initResult.pin,
+          }),
+        );
+        setTelegramToast({
+          message:
+            values.funnelMode === "auto" && !hasWebhook
+              ? "已建立 link + PIN，請先完成配對；目前 Tailscale Funnel 尚未成功啟用"
+              : "已建立 link + PIN，請在 Telegram 完成配對",
+          type:
+            values.funnelMode === "auto" && !hasWebhook ? "warning" : "success",
+        });
+      } else {
+        setTelegramPairingState(null);
+        setShowTelegramWizard(false);
+        setTelegramToast({
+          message:
+            values.funnelMode === "auto" && !hasWebhook
+              ? "Telegram 已初始化，但 Funnel 尚未成功，已進入 pairing-only 模式"
+              : "Telegram 已完成設定",
+          type:
+            values.funnelMode === "auto" && !hasWebhook ? "warning" : "success",
+        });
+      }
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Telegram 初始化失敗";
@@ -393,6 +491,23 @@ export const StepperView: React.FC<StepperViewProps> = ({
 
   const handleTelegramToggle = async (): Promise<void> => {
     const nextEnabled = !telegramEnabled;
+
+    if (nextEnabled) {
+      const latest = loadConfig();
+      if (!isTelegramConfigured(latest.telegram)) {
+        openTelegramWizard();
+        setTelegramToast({
+          message: resolvePendingPairingStepState(
+            latest.telegram,
+            telegramTargetConfigFile,
+          )
+            ? "Telegram 尚待完成 link + PIN 配對"
+            : "Telegram 設定未完成，請先完成設定流程",
+          type: "warning",
+        });
+        return;
+      }
+    }
 
     try {
       await runConfigCommandExpectSuccess(
@@ -412,6 +527,28 @@ export const StepperView: React.FC<StepperViewProps> = ({
       });
     }
   };
+
+  useEffect(() => {
+    if (!showTelegramWizard || !telegramPairingState) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const refreshed = loadConfig();
+      if (!isTelegramConfigured(refreshed.telegram)) {
+        return;
+      }
+
+      refreshTelegramState();
+      setShowTelegramWizard(false);
+      setTelegramToast({
+        message: "Telegram 對接完成，現在可以直接切換 TG mode",
+        type: "success",
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [refreshTelegramState, showTelegramWizard, telegramPairingState]);
 
   // Reset internal stepper state when the session changes
   useEffect(() => {
@@ -506,8 +643,17 @@ export const StepperView: React.FC<StepperViewProps> = ({
 
   // Emit flow state changes
   useEffect(() => {
-    onFlowStateChange?.({ showReview, showRejectionConfirm, showAbandonedConfirm });
-  }, [onFlowStateChange, showRejectionConfirm, showReview, showAbandonedConfirm]);
+    onFlowStateChange?.({
+      showReview,
+      showRejectionConfirm,
+      showAbandonedConfirm,
+    });
+  }, [
+    onFlowStateChange,
+    showRejectionConfirm,
+    showReview,
+    showAbandonedConfirm,
+  ]);
 
   // Update elapsed time since session creation
   useEffect(() => {
@@ -542,7 +688,8 @@ export const StepperView: React.FC<StepperViewProps> = ({
         const isMultiSelect = isQuestionMultiSelect(answer.questionIndex);
 
         if (isMultiSelect) {
-          const selectedOptions = answer.selectedOptions ??
+          const selectedOptions =
+            answer.selectedOptions ??
             (answer.selectedOption ? [answer.selectedOption] : undefined);
           return {
             ...answer,
@@ -551,7 +698,8 @@ export const StepperView: React.FC<StepperViewProps> = ({
           };
         }
 
-        const selectedOption = answer.selectedOption ?? answer.selectedOptions?.[0];
+        const selectedOption =
+          answer.selectedOption ?? answer.selectedOptions?.[0];
         return {
           ...answer,
           selectedOption,
@@ -702,7 +850,8 @@ export const StepperView: React.FC<StepperViewProps> = ({
       const nextAnswers = new Map(prev);
 
       if (wasForced) {
-        const firstSelected = existing.selectedOptions?.[0] ?? existing.selectedOption;
+        const firstSelected =
+          existing.selectedOptions?.[0] ?? existing.selectedOption;
         nextAnswers.set(currentQuestionIndex, {
           ...existing,
           selectedOption: firstSelected,
@@ -757,7 +906,8 @@ export const StepperView: React.FC<StepperViewProps> = ({
       showRejectionConfirm ||
       showAbandonedConfirm ||
       showTelegramWizard
-    ) return;
+    )
+      return;
 
     // Derive text-input state from both focusContext and focusedOptionIndex
     const isInTextInput =
@@ -774,7 +924,7 @@ export const StepperView: React.FC<StepperViewProps> = ({
       );
 
       if (telegramOutcome === "setup") {
-        setShowTelegramWizard(true);
+        openTelegramWizard();
         return;
       }
 
@@ -925,7 +1075,15 @@ export const StepperView: React.FC<StepperViewProps> = ({
     ];
 
     return (
-      <box style={{ flexDirection: "column", paddingLeft: 2, paddingRight: 2, paddingTop: 1, paddingBottom: 1 }}>
+      <box
+        style={{
+          flexDirection: "column",
+          paddingLeft: 2,
+          paddingRight: 2,
+          paddingTop: 1,
+          paddingBottom: 1,
+        }}
+      >
         <box
           style={{
             borderStyle: "rounded",
@@ -935,7 +1093,9 @@ export const StepperView: React.FC<StepperViewProps> = ({
           }}
         >
           <box style={{ marginBottom: 1 }}>
-            <text style={{ fg: theme.colors.warning, bold: true }}>{t("abandoned.title")}</text>
+            <text style={{ fg: theme.colors.warning, bold: true }}>
+              {t("abandoned.title")}
+            </text>
           </box>
           <box style={{ marginBottom: 1 }}>
             <text>{t("abandoned.message")}</text>
@@ -958,7 +1118,9 @@ export const StepperView: React.FC<StepperViewProps> = ({
             );
           })}
           <box style={{ marginTop: 1 }}>
-            <text fg={theme.colors.textDim}>{"\u2191\u2193 Navigate | Enter Select"}</text>
+            <text fg={theme.colors.textDim}>
+              {"\u2191\u2193 Navigate | Enter Select"}
+            </text>
           </box>
         </box>
       </box>
@@ -968,7 +1130,15 @@ export const StepperView: React.FC<StepperViewProps> = ({
   // Show rejection confirmation
   if (showRejectionConfirm) {
     return (
-      <box style={{ flexDirection: "column", paddingLeft: 2, paddingRight: 2, paddingTop: 1, paddingBottom: 1 }}>
+      <box
+        style={{
+          flexDirection: "column",
+          paddingLeft: 2,
+          paddingRight: 2,
+          paddingTop: 1,
+          paddingBottom: 1,
+        }}
+      >
         <ConfirmationDialog
           message={t("confirmation.rejectMessage")}
           onCancel={() => setShowRejectionConfirm(false)}
@@ -981,9 +1151,21 @@ export const StepperView: React.FC<StepperViewProps> = ({
 
   if (showTelegramWizard) {
     return (
-      <box style={{ flexDirection: "column", paddingLeft: 2, paddingRight: 2, paddingTop: 1, paddingBottom: 1 }}>
+      <box
+        style={{
+          flexDirection: "column",
+          paddingLeft: 2,
+          paddingRight: 2,
+          paddingTop: 1,
+          paddingBottom: 1,
+        }}
+      >
         <TelegramSetupWizard
-          onCancel={() => setShowTelegramWizard(false)}
+          pairingState={telegramPairingState}
+          onCancel={() => {
+            setShowTelegramWizard(false);
+            setTelegramPairingState(null);
+          }}
           onError={(message) =>
             setTelegramToast({
               message,
@@ -1000,7 +1182,15 @@ export const StepperView: React.FC<StepperViewProps> = ({
   // Show review screen
   if (showReview) {
     return (
-      <box style={{ flexDirection: "column", paddingLeft: 2, paddingRight: 2, paddingTop: 1, paddingBottom: 1 }}>
+      <box
+        style={{
+          flexDirection: "column",
+          paddingLeft: 2,
+          paddingRight: 2,
+          paddingTop: 1,
+          paddingBottom: 1,
+        }}
+      >
         <ReviewScreen
           isSubmitting={submitting}
           answers={answers}
@@ -1045,7 +1235,11 @@ export const StepperView: React.FC<StepperViewProps> = ({
         onElaborateSelect={handleElaborateSelect}
         elaborateText={elaborateMarks.get(currentQuestionIndex) || ""}
         onElaborateTextChange={handleElaborateTextChange}
-        onSelectIndex={(idx) => setCurrentQuestionIndex(Math.max(0, Math.min(idx, sessionRequest.questions.length - 1)))}
+        onSelectIndex={(idx) =>
+          setCurrentQuestionIndex(
+            Math.max(0, Math.min(idx, sessionRequest.questions.length - 1)),
+          )
+        }
         showSessionSwitching={!showReview && !showRejectionConfirm}
       />
       {telegramToastNode}

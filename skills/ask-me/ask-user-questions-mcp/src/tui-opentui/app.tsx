@@ -1,6 +1,12 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot, useKeyboard } from "@opentui/react";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { promises as fs } from "fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +14,7 @@ import path from "node:path";
 import type { AUQConfig } from "../config/types.js";
 import { DEFAULT_CONFIG } from "../config/defaults.js";
 import { reloadConfig } from "../config/index.js";
+import { getConfigPaths } from "../config/ConfigLoader.js";
 import { ConfigProvider } from "./ConfigContext.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { ThemeProvider, useTheme } from "./ThemeProvider.js";
@@ -18,9 +25,7 @@ import {
   ensureDirectoryExists,
   getSessionDirectory,
 } from "../session/utils.js";
-import {
-  createTUIWatcher,
-} from "../tui/session-watcher.js";
+import { createTUIWatcher } from "../tui/session-watcher.js";
 import type { PendingSessionMeta } from "../tui/session-watcher.js";
 import {
   isSessionStale,
@@ -51,9 +56,7 @@ import {
   selectTmuxLocation,
   isTmuxLocationReachable,
 } from "../tui/shared/utils/tmux.js";
-import {
-  listReachableTmuxInstances,
-} from "../tui/shared/utils/tmux-instance-store.js";
+import { listReachableTmuxInstances } from "../tui/shared/utils/tmux-instance-store.js";
 import {
   resolveAuqSwitchTarget,
   selectLatestReachableLocation,
@@ -62,7 +65,14 @@ import { useTmuxInstanceHeartbeat } from "./hooks/useTmuxInstanceHeartbeat.js";
 import {
   startTelegramClientRuntime,
   stopTelegramClientRuntime,
+  type TelegramRuntimeStartResult,
 } from "../telegram/runtime.js";
+import {
+  buildPairingStepState,
+  isTelegramConfigured as isTelegramConfiguredState,
+  resolvePendingPairingStepState,
+  type TelegramPairingStepState,
+} from "../telegram/setup-flow.js";
 
 import { Header as _Header } from "./components/Header.js";
 import { WaitingScreen as _WaitingScreen } from "./components/WaitingScreen.js";
@@ -87,15 +97,31 @@ const BoundedErrorBoundary = ErrorBoundary as unknown as (props: {
 }) => React.ReactElement | null;
 
 // Cast all components to avoid dual React type TS2786 errors
-type AnyFC<P = Record<string, unknown>> = (props: P) => React.ReactElement | null;
-const Header = _Header as unknown as AnyFC<React.ComponentProps<typeof _Header>>;
-const WaitingScreen = _WaitingScreen as unknown as AnyFC<React.ComponentProps<typeof _WaitingScreen>>;
-const StepperView = _StepperView as unknown as AnyFC<React.ComponentProps<typeof _StepperView>>;
-const SessionDots = _SessionDots as unknown as AnyFC<React.ComponentProps<typeof _SessionDots>>;
-const SessionPicker = _SessionPicker as unknown as AnyFC<React.ComponentProps<typeof _SessionPicker>>;
-const UpdateOverlay = _UpdateOverlay as unknown as AnyFC<React.ComponentProps<typeof _UpdateOverlay>>;
+type AnyFC<P = Record<string, unknown>> = (
+  props: P,
+) => React.ReactElement | null;
+const Header = _Header as unknown as AnyFC<
+  React.ComponentProps<typeof _Header>
+>;
+const WaitingScreen = _WaitingScreen as unknown as AnyFC<
+  React.ComponentProps<typeof _WaitingScreen>
+>;
+const StepperView = _StepperView as unknown as AnyFC<
+  React.ComponentProps<typeof _StepperView>
+>;
+const SessionDots = _SessionDots as unknown as AnyFC<
+  React.ComponentProps<typeof _SessionDots>
+>;
+const SessionPicker = _SessionPicker as unknown as AnyFC<
+  React.ComponentProps<typeof _SessionPicker>
+>;
+const UpdateOverlay = _UpdateOverlay as unknown as AnyFC<
+  React.ComponentProps<typeof _UpdateOverlay>
+>;
 const Toast = _Toast as unknown as AnyFC<React.ComponentProps<typeof _Toast>>;
-const ThemeIndicator = _ThemeIndicator as unknown as AnyFC<Record<string, never>>;
+const ThemeIndicator = _ThemeIndicator as unknown as AnyFC<
+  Record<string, never>
+>;
 const TelegramSetupWizard = _TelegramSetupWizard as unknown as AnyFC<
   React.ComponentProps<typeof _TelegramSetupWizard>
 >;
@@ -122,13 +148,16 @@ interface TmuxPromptState {
 
 function isTelegramConfigured(telegram: {
   enabled?: boolean;
+  tokenEnvKey?: string;
   webhookUrl?: string;
   allowedChatId?: string;
 }): boolean {
-  return (
-    (telegram.webhookUrl?.trim().length ?? 0) > 0 ||
-    (telegram.allowedChatId?.trim().length ?? 0) > 0
-  );
+  return isTelegramConfiguredState({
+    allowedChatId: telegram.allowedChatId ?? "",
+    enabled: telegram.enabled ?? false,
+    tokenEnvKey: telegram.tokenEnvKey ?? "AUQ_TELEGRAM_BOT_TOKEN",
+    webhookUrl: telegram.webhookUrl ?? "",
+  });
 }
 
 const TMUX_DEBUG_LOG_PATH =
@@ -147,7 +176,14 @@ function buildTelegramInitCommandArgs(values: {
   funnelMode: "auto" | "off";
   webhookUrl?: string;
 }): string[] {
-  const args = ["telegram", "init", "--token", values.token, "--funnel", values.funnelMode];
+  const args = [
+    "telegram",
+    "init",
+    "--token",
+    values.token,
+    "--funnel",
+    values.funnelMode,
+  ];
   if (values.funnelMode === "off" && values.webhookUrl) {
     args.push("--webhook-url", values.webhookUrl);
   }
@@ -177,6 +213,45 @@ async function runConfigCommandExpectSuccess(args: string[]): Promise<void> {
   }
 }
 
+interface TelegramInitResult {
+  botLink?: string;
+  pin?: string;
+  expiresAt?: string;
+}
+
+async function runTelegramInitAndParseResult(
+  args: string[],
+): Promise<TelegramInitResult> {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (...values: unknown[]) => {
+    const line = values
+      .map((value) =>
+        typeof value === "string" ? value : JSON.stringify(value),
+      )
+      .join(" ");
+    logs.push(line);
+  };
+
+  try {
+    await runConfigCommandExpectSuccess([...args, "--json"]);
+  } finally {
+    console.log = originalLog;
+  }
+
+  for (let i = logs.length - 1; i >= 0; i -= 1) {
+    const line = logs[i];
+    if (!line) continue;
+    try {
+      const parsed = JSON.parse(line) as TelegramInitResult;
+      return parsed;
+    } catch {
+      // Keep scanning.
+    }
+  }
+  return {};
+}
+
 type TmuxConfigBooleanKey =
   | "tmux.autoSwitch.enabled"
   | "tmux.autoSwitch.prompted"
@@ -200,14 +275,22 @@ function AppInner({ config }: { config: AUQConfig }) {
   const [state, setState] = useState<AppState>({ mode: "WAITING" });
   const [sessionQueue, setSessionQueue] = useState<SessionData[]>([]);
   const [activeSessionIndex, setActiveSessionIndex] = useState(0);
-  const [sessionUIStates, setSessionUIStates] = useState<Record<string, SessionUIState>>({});
+  const [sessionUIStates, setSessionUIStates] = useState<
+    Record<string, SessionUIState>
+  >({});
   const [isInitialized, setIsInitialized] = useState(false);
   const [toast, setToast] = useState<ToastData | null>(null);
   const [showSessionPicker, setShowSessionPicker] = useState(false);
   const [isInReviewOrRejection, setIsInReviewOrRejection] = useState(false);
-  const [sessionMeta, setSessionMeta] = useState<Map<string, { status: string; createdAt: string }>>(new Map());
-  const [lastInteractions, setLastInteractions] = useState<Map<string, number>>(new Map());
-  const [staleToastShown, setStaleToastShown] = useState<Set<string>>(new Set());
+  const [sessionMeta, setSessionMeta] = useState<
+    Map<string, { status: string; createdAt: string }>
+  >(new Map());
+  const [lastInteractions, setLastInteractions] = useState<Map<string, number>>(
+    new Map(),
+  );
+  const [staleToastShown, setStaleToastShown] = useState<Set<string>>(
+    new Set(),
+  );
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [showUpdateOverlay, setShowUpdateOverlay] = useState(false);
   const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
@@ -216,11 +299,14 @@ function AppInner({ config }: { config: AUQConfig }) {
   const [updateDismissed, setUpdateDismissed] = useState(false);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [showTelegramWizard, setShowTelegramWizard] = useState(false);
+  const [telegramPairingState, setTelegramPairingState] =
+    useState<TelegramPairingStepState | null>(null);
   const [tmuxPromptState, setTmuxPromptState] = useState<TmuxPromptState>({
     visible: false,
     focusedIndex: 0,
     dontAskAgain: false,
   });
+  const telegramTargetConfigFile = useMemo(() => getConfigPaths().local, []);
   const [tmuxAutoSwitchEnabled, setTmuxAutoSwitchEnabledState] = useState(
     config.tmux.autoSwitch.enabled,
   );
@@ -252,17 +338,23 @@ function AppInner({ config }: { config: AUQConfig }) {
 
   // ── Show toast helper ────────────────────────────────────────
   const showToast = useCallback(
-    (message: string, type: "success" | "error" | "info" = "success", title?: string) => {
+    (
+      message: string,
+      type: "success" | "error" | "info" = "success",
+      title?: string,
+    ) => {
       setToast({ message, type, title });
     },
     [],
   );
 
-  const syncTelegramRuntime = useCallback(async () => {
+  const syncTelegramRuntime = useCallback(async (): Promise<
+    TelegramRuntimeStartResult | { status: "disabled" }
+  > => {
     const latestConfig = reloadConfig();
     if (!latestConfig.telegram.enabled) {
       await stopTelegramClientRuntime();
-      return;
+      return { status: "disabled" };
     }
 
     const result = await startTelegramClientRuntime(latestConfig.telegram);
@@ -273,7 +365,16 @@ function AppInner({ config }: { config: AUQConfig }) {
         "Telegram",
       );
     }
+    return result;
   }, [showToast]);
+
+  const openTelegramWizard = useCallback(() => {
+    const latest = reloadConfig();
+    setTelegramPairingState(
+      resolvePendingPairingStepState(latest.telegram, telegramTargetConfigFile),
+    );
+    setShowTelegramWizard(true);
+  }, [telegramTargetConfigFile]);
 
   const setTmuxAutoSwitchEnabled = useCallback(
     async (enabled: boolean) => {
@@ -286,7 +387,8 @@ function AppInner({ config }: { config: AUQConfig }) {
           "Tmux",
         );
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Tmux 設定更新失敗";
+        const message =
+          error instanceof Error ? error.message : "Tmux 設定更新失敗";
         showToast(message, "error", "Tmux");
       }
     },
@@ -307,14 +409,43 @@ function AppInner({ config }: { config: AUQConfig }) {
   );
 
   const handleWaitingTelegramInit = useCallback(
-    async (values: { token: string; funnelMode: "auto" | "off"; webhookUrl?: string }) => {
+    async (values: {
+      token: string;
+      funnelMode: "auto" | "off";
+      webhookUrl?: string;
+    }) => {
       try {
-        await runConfigCommandExpectSuccess(buildTelegramInitCommandArgs(values));
-        await syncTelegramRuntime();
-        setShowTelegramWizard(false);
-        showToast("Telegram 已完成設定", "success", "Telegram");
+        const initResult = await runTelegramInitAndParseResult(
+          buildTelegramInitCommandArgs(values),
+        );
+        const runtimeResult = await syncTelegramRuntime();
+        const latest = reloadConfig();
+        const hasWebhook = latest.telegram.webhookUrl.trim().length > 0;
+        if (initResult.botLink && initResult.pin) {
+          setTelegramPairingState(
+            buildPairingStepState({
+              botLink: initResult.botLink,
+              expiresAt: initResult.expiresAt,
+              funnelMode: values.funnelMode,
+              hasWebhook,
+              pin: initResult.pin,
+            }),
+          );
+          showToast(
+            values.funnelMode === "auto" && !hasWebhook
+              ? "已建立 link + PIN，但 Tailscale Funnel 尚未成功啟用"
+              : "已建立 link + PIN，請在 Telegram 完成配對",
+            runtimeResult.status === "missing-config" ? "error" : "success",
+            "Telegram 配對",
+          );
+        } else {
+          setTelegramPairingState(null);
+          setShowTelegramWizard(false);
+          showToast("Telegram 已完成設定", "success", "Telegram");
+        }
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Telegram 初始化失敗";
+        const message =
+          error instanceof Error ? error.message : "Telegram 初始化失敗";
         showToast(message, "error", "Telegram");
         throw error;
       }
@@ -325,15 +456,49 @@ function AppInner({ config }: { config: AUQConfig }) {
   const handleWaitingTelegramToggle = useCallback(async () => {
     const latest = reloadConfig();
     const nextEnabled = !latest.telegram.enabled;
+    if (nextEnabled && !isTelegramConfigured(latest.telegram)) {
+      openTelegramWizard();
+      showToast(
+        resolvePendingPairingStepState(
+          latest.telegram,
+          telegramTargetConfigFile,
+        )
+          ? "Telegram 尚待完成 link + PIN 配對"
+          : "Telegram 設定未完成，請先完成設定流程",
+        "info",
+        "Telegram",
+      );
+      return;
+    }
     try {
-      await runConfigCommandExpectSuccess(buildTelegramToggleCommandArgs(nextEnabled));
-      await syncTelegramRuntime();
-      showToast(nextEnabled ? "Telegram 已啟用" : "Telegram 已停用", "success", "Telegram");
+      await runConfigCommandExpectSuccess(
+        buildTelegramToggleCommandArgs(nextEnabled),
+      );
+      const runtimeResult = await syncTelegramRuntime();
+      if (nextEnabled && runtimeResult.status === "missing-config") {
+        await runConfigCommandExpectSuccess(
+          buildTelegramToggleCommandArgs(false),
+        );
+        openTelegramWizard();
+        showToast("Telegram 設定未完成，請先完成設定流程", "info", "Telegram");
+        return;
+      }
+      showToast(
+        nextEnabled ? "Telegram 已啟用" : "Telegram 已停用",
+        "success",
+        "Telegram",
+      );
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Telegram 狀態切換失敗";
+      const message =
+        error instanceof Error ? error.message : "Telegram 狀態切換失敗";
       showToast(message, "error", "Telegram");
     }
-  }, [showToast, syncTelegramRuntime]);
+  }, [
+    openTelegramWizard,
+    showToast,
+    syncTelegramRuntime,
+    telegramTargetConfigFile,
+  ]);
 
   // ── Initialize: load existing sessions + start persistent watcher ───
   useEffect(() => {
@@ -366,9 +531,15 @@ function AppInner({ config }: { config: AUQConfig }) {
 
         setSessionQueue(validSessions);
 
-        const initialMeta = new Map<string, { status: string; createdAt: string }>();
+        const initialMeta = new Map<
+          string,
+          { status: string; createdAt: string }
+        >();
         for (const meta of sessionsWithStatus) {
-          initialMeta.set(meta.sessionId, { status: meta.status, createdAt: meta.createdAt });
+          initialMeta.set(meta.sessionId, {
+            status: meta.status,
+            createdAt: meta.createdAt,
+          });
         }
         setSessionMeta(initialMeta);
         setIsInitialized(true);
@@ -406,7 +577,7 @@ function AppInner({ config }: { config: AUQConfig }) {
         notificationBatcherRef.current.flush();
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -415,6 +586,29 @@ function AppInner({ config }: { config: AUQConfig }) {
       void stopTelegramClientRuntime();
     };
   }, [syncTelegramRuntime]);
+
+  useEffect(() => {
+    if (!showTelegramWizard || !telegramPairingState) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const latest = reloadConfig();
+      if (!isTelegramConfigured(latest.telegram)) {
+        return;
+      }
+
+      setTelegramPairingState(null);
+      setShowTelegramWizard(false);
+      showToast(
+        "Telegram 對接完成，現在可以直接切換 TG mode",
+        "success",
+        "Telegram",
+      );
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [showToast, showTelegramWizard, telegramPairingState]);
 
   useEffect(() => {
     const sync = () => {
@@ -435,7 +629,11 @@ function AppInner({ config }: { config: AUQConfig }) {
     if (!isRunningInTmux()) return;
     const latest = reloadConfig();
     setTmuxAutoSwitchEnabledState(latest.tmux.autoSwitch.enabled);
-    if (!latest.tmux.autoSwitch.askOnFirstTmux || latest.tmux.autoSwitch.prompted) return;
+    if (
+      !latest.tmux.autoSwitch.askOnFirstTmux ||
+      latest.tmux.autoSwitch.prompted
+    )
+      return;
     const location = getCurrentTmuxLocation();
     tmuxRuntimeRef.current.lastUsedAuqLocation = location;
     setTmuxPromptState({
@@ -481,7 +679,9 @@ function AppInner({ config }: { config: AUQConfig }) {
     };
 
     setIsCheckingUpdate(true);
-    void runCheck().finally(() => { setIsCheckingUpdate(false); });
+    void runCheck().finally(() => {
+      setIsCheckingUpdate(false);
+    });
     intervalId = setInterval(() => {
       checker.clearCache();
       void runCheck();
@@ -490,7 +690,7 @@ function AppInner({ config }: { config: AUQConfig }) {
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.updateCheck]);
 
   // ── Auto-transition: WAITING ↔ PROCESSING ────────────────────
@@ -515,7 +715,8 @@ function AppInner({ config }: { config: AUQConfig }) {
     if (state.mode !== "PROCESSING") return;
     const activeSession = sessionQueue[activeSessionIndex];
     if (!activeSession) return;
-    if (tmuxRuntimeRef.current.switchedSessionId === activeSession.sessionId) return;
+    if (tmuxRuntimeRef.current.switchedSessionId === activeSession.sessionId)
+      return;
 
     const currentLocation = getCurrentAttachedTmuxLocation();
     if (!currentLocation) {
@@ -530,7 +731,8 @@ function AppInner({ config }: { config: AUQConfig }) {
         .filter((x) => isTmuxLocationReachable(x.location))
         .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
       const preferredLocation =
-        reachableInstances.find((x) => x.state === "questioning")?.location ?? null;
+        reachableInstances.find((x) => x.state === "questioning")?.location ??
+        null;
       const reachable = reachableInstances.map((x) => x.location);
       const target = resolveAuqSwitchTarget({
         currentLocation,
@@ -627,7 +829,10 @@ function AppInner({ config }: { config: AUQConfig }) {
                 parsed.status === "completed" ||
                 parsed.status === "rejected"
               ) {
-                return { notifyAsTimedOut: parsed.status === "timed_out", session };
+                return {
+                  notifyAsTimedOut: parsed.status === "timed_out",
+                  session,
+                };
               }
               return null;
             } catch {
@@ -639,12 +844,17 @@ function AppInner({ config }: { config: AUQConfig }) {
         if (isCancelled) return;
 
         const sessionsToRemove = checks.filter(
-          (entry): entry is { notifyAsTimedOut: boolean; session: SessionData } => entry !== null,
+          (
+            entry,
+          ): entry is { notifyAsTimedOut: boolean; session: SessionData } =>
+            entry !== null,
         );
 
         if (sessionsToRemove.length === 0) return;
 
-        const timedOutSession = sessionsToRemove.find((entry) => entry.notifyAsTimedOut);
+        const timedOutSession = sessionsToRemove.find(
+          (entry) => entry.notifyAsTimedOut,
+        );
         if (timedOutSession) {
           const title =
             timedOutSession.session.sessionRequest.questions[0]?.title ||
@@ -652,7 +862,9 @@ function AppInner({ config }: { config: AUQConfig }) {
           showToast(`Session '${title}' timed out`, "info");
         }
 
-        const idsToRemove = new Set(sessionsToRemove.map((entry) => entry.session.sessionId));
+        const idsToRemove = new Set(
+          sessionsToRemove.map((entry) => entry.session.sessionId),
+        );
 
         setSessionUIStates((prev) => {
           const next = { ...prev };
@@ -665,7 +877,9 @@ function AppInner({ config }: { config: AUQConfig }) {
           let nextActiveIndex = activeSessionIndexRef.current;
 
           const removalIndices = Array.from(idsToRemove)
-            .map((sessionId) => nextQueue.findIndex((s) => s.sessionId === sessionId))
+            .map((sessionId) =>
+              nextQueue.findIndex((s) => s.sessionId === sessionId),
+            )
             .filter((idx) => idx !== -1)
             .sort((a, b) => b - a);
 
@@ -679,7 +893,11 @@ function AppInner({ config }: { config: AUQConfig }) {
           }
 
           setActiveSessionIndex(nextActiveIndex);
-          setState(nextQueue.length === 0 ? { mode: "WAITING" } : { mode: "PROCESSING" });
+          setState(
+            nextQueue.length === 0
+              ? { mode: "WAITING" }
+              : { mode: "PROCESSING" },
+          );
           return nextQueue;
         });
       } finally {
@@ -687,7 +905,9 @@ function AppInner({ config }: { config: AUQConfig }) {
       }
     };
 
-    const interval = setInterval(() => { void checkPausedSessionStatuses(); }, 2000);
+    const interval = setInterval(() => {
+      void checkPausedSessionStatuses();
+    }, 2000);
     statusIntervalRef.current = interval;
 
     // Stale detection
@@ -707,7 +927,10 @@ function AppInner({ config }: { config: AUQConfig }) {
         setSessionMeta((prev) => {
           const next = new Map(prev);
           for (const meta of freshMeta) {
-            next.set(meta.sessionId, { status: meta.status, createdAt: meta.createdAt });
+            next.set(meta.sessionId, {
+              status: meta.status,
+              createdAt: meta.createdAt,
+            });
           }
           return next;
         });
@@ -721,14 +944,21 @@ function AppInner({ config }: { config: AUQConfig }) {
           lastInteractions.get(session.sessionId),
         );
         if (stale && notifyOnStale && !staleToastShown.has(session.sessionId)) {
-          const title = session.sessionRequest.questions[0]?.title ?? session.sessionId.slice(0, 8);
-          showToast(formatStaleToastMessage(title, session.timestamp.getTime()), "info");
+          const title =
+            session.sessionRequest.questions[0]?.title ??
+            session.sessionId.slice(0, 8);
+          showToast(
+            formatStaleToastMessage(title, session.timestamp.getTime()),
+            "info",
+          );
           setStaleToastShown((prev) => new Set(prev).add(session.sessionId));
         }
       }
     };
 
-    const staleInterval = setInterval(() => { void runStaleDetection(); }, 2000);
+    const staleInterval = setInterval(() => {
+      void runStaleDetection();
+    }, 2000);
     staleIntervalRef.current = staleInterval;
 
     return () => {
@@ -738,13 +968,27 @@ function AppInner({ config }: { config: AUQConfig }) {
       statusIntervalRef.current = null;
       staleIntervalRef.current = null;
     };
-  }, [activeSessionIndex, sessionDir, sessionQueue, state.mode, config.staleThreshold, config.notifyOnStale, lastInteractions, staleToastShown, showToast]);
+  }, [
+    activeSessionIndex,
+    sessionDir,
+    sessionQueue,
+    state.mode,
+    config.staleThreshold,
+    config.notifyOnStale,
+    lastInteractions,
+    staleToastShown,
+    showToast,
+  ]);
 
   // ── Session switching helper ──────────────────────────────────
   const switchToSession = useCallback(
     (targetIndex: number) => {
-      if (state.mode !== "PROCESSING" || sessionQueueRef.current.length <= 1) return;
-      const clampedIndex = Math.max(0, Math.min(targetIndex, sessionQueueRef.current.length - 1));
+      if (state.mode !== "PROCESSING" || sessionQueueRef.current.length <= 1)
+        return;
+      const clampedIndex = Math.max(
+        0,
+        Math.min(targetIndex, sessionQueueRef.current.length - 1),
+      );
       if (clampedIndex === activeSessionIndexRef.current) return;
       setActiveSessionIndex(clampedIndex);
       setShowSessionPicker(false);
@@ -758,7 +1002,8 @@ function AppInner({ config }: { config: AUQConfig }) {
   );
 
   // ── Keyboard shortcuts ────────────────────────────────────────
-  const activeSession = state.mode === "PROCESSING" ? sessionQueue[activeSessionIndex] : undefined;
+  const activeSession =
+    state.mode === "PROCESSING" ? sessionQueue[activeSessionIndex] : undefined;
   const canUseDirectJump =
     !activeSession ||
     sessionUIStates[activeSession.sessionId]?.focusContext === "option" ||
@@ -776,7 +1021,13 @@ function AppInner({ config }: { config: AUQConfig }) {
     if (!isNavActive) return;
 
     // Ctrl+S / Ctrl+L: open session picker
-    if (key.ctrl && (key.name === "s" || key.sequence === "\x13" || key.name === "l" || key.sequence === "\x0c")) {
+    if (
+      key.ctrl &&
+      (key.name === "s" ||
+        key.sequence === "\x13" ||
+        key.name === "l" ||
+        key.sequence === "\x0c")
+    ) {
       setShowSessionPicker(true);
       return;
     }
@@ -792,18 +1043,26 @@ function AppInner({ config }: { config: AUQConfig }) {
 
       // Session navigation: ] and [
       if (seq === KEYS.SESSION_NEXT && canUseDirectJump) {
-        switchToSession(getNextSessionIndex(activeSessionIndex, sessionQueue.length));
+        switchToSession(
+          getNextSessionIndex(activeSessionIndex, sessionQueue.length),
+        );
         return;
       }
       if (seq === KEYS.SESSION_PREV && canUseDirectJump) {
-        switchToSession(getPrevSessionIndex(activeSessionIndex, sessionQueue.length));
+        switchToSession(
+          getPrevSessionIndex(activeSessionIndex, sessionQueue.length),
+        );
         return;
       }
 
       // 1-9: jump to session
       if (/^[1-9]$/.test(seq) && canUseDirectJump) {
         const keyNumber = Number(seq);
-        const targetIndex = getDirectJumpIndex(keyNumber, activeSessionIndex, sessionQueue.length);
+        const targetIndex = getDirectJumpIndex(
+          keyNumber,
+          activeSessionIndex,
+          sessionQueue.length,
+        );
         if (targetIndex !== null) switchToSession(targetIndex);
         return;
       }
@@ -847,15 +1106,17 @@ function AppInner({ config }: { config: AUQConfig }) {
       const enabled = tmuxPromptState.focusedIndex === 0;
       const askOnFirstTmux = !tmuxPromptState.dontAskAgain;
       void setTmuxConfigBoolean("tmux.autoSwitch.enabled", enabled)
+        .then(() => setTmuxConfigBoolean("tmux.autoSwitch.prompted", true))
         .then(() =>
-          setTmuxConfigBoolean("tmux.autoSwitch.prompted", true),
-        )
-        .then(() =>
-          setTmuxConfigBoolean("tmux.autoSwitch.askOnFirstTmux", askOnFirstTmux),
+          setTmuxConfigBoolean(
+            "tmux.autoSwitch.askOnFirstTmux",
+            askOnFirstTmux,
+          ),
         )
         .then(() => setTmuxAutoSwitchEnabledState(enabled))
         .catch((error) => {
-          const message = error instanceof Error ? error.message : "Tmux 設定更新失敗";
+          const message =
+            error instanceof Error ? error.message : "Tmux 設定更新失敗";
           showToast(message, "error", "Tmux");
         })
         .finally(() =>
@@ -877,7 +1138,7 @@ function AppInner({ config }: { config: AUQConfig }) {
     if (key.name?.toLowerCase() !== "t") return;
     const telegram = reloadConfig().telegram;
     if (!isTelegramConfigured(telegram)) {
-      setShowTelegramWizard(true);
+      openTelegramWizard();
       return;
     }
     void handleWaitingTelegramToggle();
@@ -900,7 +1161,10 @@ function AppInner({ config }: { config: AUQConfig }) {
       const success = await installUpdate(pm);
       if (success) {
         setShowUpdateOverlay(false);
-        showToast(`Updated to v${updateInfo!.latestVersion}. Please restart auq.`, "success");
+        showToast(
+          `Updated to v${updateInfo!.latestVersion}. Please restart auq.`,
+          "success",
+        );
         setTimeout(() => process.exit(0), 2000);
       } else {
         setInstallError("Installation failed. Please try manually.");
@@ -908,7 +1172,9 @@ function AppInner({ config }: { config: AUQConfig }) {
       setIsInstallingUpdate(false);
     } catch (err) {
       setIsInstallingUpdate(false);
-      setInstallError(err instanceof Error ? err.message : "Installation failed");
+      setInstallError(
+        err instanceof Error ? err.message : "Installation failed",
+      );
     }
   };
 
@@ -917,7 +1183,10 @@ function AppInner({ config }: { config: AUQConfig }) {
       try {
         const cache = await readCache();
         if (cache) {
-          await writeCache({ ...cache, skippedVersion: updateInfo.latestVersion });
+          await writeCache({
+            ...cache,
+            skippedVersion: updateInfo.latestVersion,
+          });
         }
       } catch {
         // Non-critical
@@ -933,10 +1202,17 @@ function AppInner({ config }: { config: AUQConfig }) {
   };
 
   // ── Session completion handler ─────────────────────────────────
-  const handleSessionComplete = (wasRejected = false, rejectionReason?: string | null) => {
+  const handleSessionComplete = (
+    wasRejected = false,
+    rejectionReason?: string | null,
+  ) => {
     if (wasRejected) {
       if (rejectionReason) {
-        showToast(`Reason: ${rejectionReason}`, "info", "🙅 Question set rejected");
+        showToast(
+          `Reason: ${rejectionReason}`,
+          "info",
+          "🙅 Question set rejected",
+        );
       } else {
         showToast("Question set rejected", "info");
       }
@@ -957,9 +1233,15 @@ function AppInner({ config }: { config: AUQConfig }) {
     setSessionQueue((prev) => {
       const removedIndex = activeSessionIndex;
       const nextQueue = prev.filter((_, i) => i !== removedIndex);
-      const nextActiveIndex = getAdjustedIndexAfterRemoval(removedIndex, activeSessionIndex, nextQueue.length);
+      const nextActiveIndex = getAdjustedIndexAfterRemoval(
+        removedIndex,
+        activeSessionIndex,
+        nextQueue.length,
+      );
       setActiveSessionIndex(nextActiveIndex);
-      setState(nextQueue.length === 0 ? { mode: "WAITING" } : { mode: "PROCESSING" });
+      setState(
+        nextQueue.length === 0 ? { mode: "WAITING" } : { mode: "PROCESSING" },
+      );
       if (nextQueue.length === 0) {
         if (statusIntervalRef.current) {
           clearInterval(statusIntervalRef.current);
@@ -985,8 +1267,14 @@ function AppInner({ config }: { config: AUQConfig }) {
 
   // ── Flow state change handler ──────────────────────────────────
   const handleFlowStateChange = useCallback(
-    (flowState: { showReview: boolean; showRejectionConfirm: boolean; showAbandonedConfirm: boolean }) => {
-      setIsInReviewOrRejection(flowState.showReview || flowState.showRejectionConfirm);
+    (flowState: {
+      showReview: boolean;
+      showRejectionConfirm: boolean;
+      showAbandonedConfirm: boolean;
+    }) => {
+      setIsInReviewOrRejection(
+        flowState.showReview || flowState.showRejectionConfirm,
+      );
     },
     [],
   );
@@ -999,15 +1287,28 @@ function AppInner({ config }: { config: AUQConfig }) {
     () =>
       sessionQueue.map((s) => ({
         ...s,
-        isStale: isSessionStale(s.timestamp.getTime(), staleThreshold, lastInteractions.get(s.sessionId)),
-        isAbandoned: isSessionAbandoned(sessionMeta.get(s.sessionId)?.status ?? ""),
+        isStale: isSessionStale(
+          s.timestamp.getTime(),
+          staleThreshold,
+          lastInteractions.get(s.sessionId),
+        ),
+        isAbandoned: isSessionAbandoned(
+          sessionMeta.get(s.sessionId)?.status ?? "",
+        ),
       })),
     [sessionQueue, staleThreshold, lastInteractions, sessionMeta],
   );
 
   if (!isInitialized) {
     return (
-      <box style={{ flexDirection: "column", width: "100%", height: "100%", backgroundColor: theme.colors.bg }}>
+      <box
+        style={{
+          flexDirection: "column",
+          width: "100%",
+          height: "100%",
+          backgroundColor: theme.colors.bg,
+        }}
+      >
         <text style={{ fg: "#888888" }}>Loading...</text>
       </box>
     );
@@ -1019,10 +1320,29 @@ function AppInner({ config }: { config: AUQConfig }) {
   if (state.mode === "WAITING") {
     if (tmuxPromptState.visible) {
       mainContent = (
-        <box style={{ flexDirection: "column", paddingLeft: 2, paddingRight: 2, paddingTop: 1, paddingBottom: 1 }}>
-          <box style={{ borderStyle: "rounded", borderColor: theme.borders.warning, flexDirection: "column", padding: 1 }}>
-            <text style={{ fg: theme.colors.warning, bold: true }}>偵測到你在 tmux 中執行 AUQ</text>
-            <text style={{ fg: theme.colors.textDim }}>要啟用自動切到 AUQ 視窗嗎？</text>
+        <box
+          style={{
+            flexDirection: "column",
+            paddingLeft: 2,
+            paddingRight: 2,
+            paddingTop: 1,
+            paddingBottom: 1,
+          }}
+        >
+          <box
+            style={{
+              borderStyle: "rounded",
+              borderColor: theme.borders.warning,
+              flexDirection: "column",
+              padding: 1,
+            }}
+          >
+            <text style={{ fg: theme.colors.warning, bold: true }}>
+              偵測到你在 tmux 中執行 AUQ
+            </text>
+            <text style={{ fg: theme.colors.textDim }}>
+              要啟用自動切到 AUQ 視窗嗎？
+            </text>
             <box style={{ marginTop: 1, flexDirection: "column" }}>
               <text style={{ bold: tmuxPromptState.focusedIndex === 0 }}>
                 {`${tmuxPromptState.focusedIndex === 0 ? "> " : "  "}啟用自動切換 (Recommended)`}
@@ -1035,7 +1355,9 @@ function AppInner({ config }: { config: AUQConfig }) {
               <text>{`[${tmuxPromptState.dontAskAgain ? "x" : " "}] Don't ask me again (按 D 切換)`}</text>
             </box>
             <box style={{ marginTop: 1 }}>
-              <text style={{ fg: theme.colors.textDim }}>↑↓ 選擇 • Enter 確認</text>
+              <text style={{ fg: theme.colors.textDim }}>
+                ↑↓ 選擇 • Enter 確認
+              </text>
             </box>
           </box>
         </box>
@@ -1043,7 +1365,11 @@ function AppInner({ config }: { config: AUQConfig }) {
     } else if (showTelegramWizard) {
       mainContent = (
         <TelegramSetupWizard
-          onCancel={() => setShowTelegramWizard(false)}
+          pairingState={telegramPairingState}
+          onCancel={() => {
+            setShowTelegramWizard(false);
+            setTelegramPairingState(null);
+          }}
           onError={(message) => showToast(message, "error", "Telegram")}
           onSubmit={handleWaitingTelegramInit}
         />
@@ -1073,7 +1399,9 @@ function AppInner({ config }: { config: AUQConfig }) {
           hasMultipleSessions={sessionQueue.length >= 2}
           sessionId={session.sessionId}
           sessionRequest={session.sessionRequest}
-          isAbandoned={isSessionAbandoned(sessionMeta.get(session.sessionId)?.status ?? "")}
+          isAbandoned={isSessionAbandoned(
+            sessionMeta.get(session.sessionId)?.status ?? "",
+          )}
           onTelegramConfigChanged={() => {
             void syncTelegramRuntime();
           }}
@@ -1084,73 +1412,92 @@ function AppInner({ config }: { config: AUQConfig }) {
   }
 
   return (
-    <box style={{ flexDirection: "column", width: "100%", height: "100%", backgroundColor: theme.colors.bg }}>
-      <box style={{ flexDirection: "column", paddingLeft: 1, paddingRight: 1, flexGrow: 1 }}>
-      <Header
-        pendingCount={
-          state.mode === "PROCESSING"
-            ? Math.max(0, sessionQueue.length - 1)
-            : sessionQueue.length
-        }
-        updateInfo={
-          !showUpdateOverlay && updateInfo
-            ? { updateType: updateInfo.updateType, latestVersion: updateInfo.latestVersion }
-            : null
-        }
-        onUpdateBadgeActivate={() => setShowUpdateOverlay(true)}
-        isCheckingUpdate={isCheckingUpdate}
-      />
-      <box style={{ flexGrow: 1, flexDirection: "column" }}>
-      {showSessionPicker && state.mode === "PROCESSING" ? (
-        <SessionPicker
-          isOpen={showSessionPicker}
-          sessions={sessionsWithMeta}
-          activeIndex={activeSessionIndex}
-          sessionUIStates={sessionUIStates}
-          onSelectIndex={(idx) => {
-            switchToSession(idx);
-            setShowSessionPicker(false);
-          }}
-          onClose={() => setShowSessionPicker(false)}
+    <box
+      style={{
+        flexDirection: "column",
+        width: "100%",
+        height: "100%",
+        backgroundColor: theme.colors.bg,
+      }}
+    >
+      <box
+        style={{
+          flexDirection: "column",
+          paddingLeft: 1,
+          paddingRight: 1,
+          flexGrow: 1,
+        }}
+      >
+        <Header
+          pendingCount={
+            state.mode === "PROCESSING"
+              ? Math.max(0, sessionQueue.length - 1)
+              : sessionQueue.length
+          }
+          updateInfo={
+            !showUpdateOverlay && updateInfo
+              ? {
+                  updateType: updateInfo.updateType,
+                  latestVersion: updateInfo.latestVersion,
+                }
+              : null
+          }
+          onUpdateBadgeActivate={() => setShowUpdateOverlay(true)}
+          isCheckingUpdate={isCheckingUpdate}
         />
-      ) : mainContent}
-      {state.mode === "PROCESSING" && sessionQueue.length >= 2 && (
-        <SessionDots
-          sessions={sessionsWithMeta}
-          activeIndex={activeSessionIndex}
-          sessionUIStates={sessionUIStates}
-        />
-      )}
-      {toast && (
-        <box style={{ marginTop: 1, justifyContent: "center" }}>
-          <Toast
-            message={toast.message}
-            onDismiss={() => setToast(null)}
-            type={toast.type}
-            title={toast.title}
-            duration={5000}
-          />
+        <box style={{ flexGrow: 1, flexDirection: "column" }}>
+          {showSessionPicker && state.mode === "PROCESSING" ? (
+            <SessionPicker
+              isOpen={showSessionPicker}
+              sessions={sessionsWithMeta}
+              activeIndex={activeSessionIndex}
+              sessionUIStates={sessionUIStates}
+              onSelectIndex={(idx) => {
+                switchToSession(idx);
+                setShowSessionPicker(false);
+              }}
+              onClose={() => setShowSessionPicker(false)}
+            />
+          ) : (
+            mainContent
+          )}
+          {state.mode === "PROCESSING" && sessionQueue.length >= 2 && (
+            <SessionDots
+              sessions={sessionsWithMeta}
+              activeIndex={activeSessionIndex}
+              sessionUIStates={sessionUIStates}
+            />
+          )}
+          {toast && (
+            <box style={{ marginTop: 1, justifyContent: "center" }}>
+              <Toast
+                message={toast.message}
+                onDismiss={() => setToast(null)}
+                type={toast.type}
+                title={toast.title}
+                duration={5000}
+              />
+            </box>
+          )}
+          {showUpdateOverlay && updateInfo && (
+            <UpdateOverlay
+              isOpen={showUpdateOverlay}
+              currentVersion={updateInfo.currentVersion}
+              latestVersion={updateInfo.latestVersion}
+              updateType={updateInfo.updateType}
+              changelog={changelogContent}
+              changelogUrl={updateInfo.changelogUrl}
+              isInstalling={isInstallingUpdate}
+              installError={installError}
+              onInstall={handleUpdateInstall}
+              onSkipVersion={handleSkipVersion}
+              onRemindLater={handleRemindLater}
+            />
+          )}
         </box>
-      )}
-      {showUpdateOverlay && updateInfo && (
-        <UpdateOverlay
-          isOpen={showUpdateOverlay}
-          currentVersion={updateInfo.currentVersion}
-          latestVersion={updateInfo.latestVersion}
-          updateType={updateInfo.updateType}
-          changelog={changelogContent}
-          changelogUrl={updateInfo.changelogUrl}
-          isInstalling={isInstallingUpdate}
-          installError={installError}
-          onInstall={handleUpdateInstall}
-          onSkipVersion={handleSkipVersion}
-          onRemindLater={handleRemindLater}
-        />
-      )}
-      </box>
-      <box style={{ marginTop: 1 }}>
-        <ThemeIndicator />
-      </box>
+        <box style={{ marginTop: 1 }}>
+          <ThemeIndicator />
+        </box>
       </box>
     </box>
   );
