@@ -177,6 +177,22 @@ async function runConfigCommandExpectSuccess(args: string[]): Promise<void> {
   }
 }
 
+type TmuxConfigBooleanKey =
+  | "tmux.autoSwitch.enabled"
+  | "tmux.autoSwitch.prompted"
+  | "tmux.autoSwitch.askOnFirstTmux";
+
+async function setTmuxConfigBoolean(
+  key: TmuxConfigBooleanKey,
+  value: boolean,
+): Promise<void> {
+  const raw = String(value);
+  // Local config has higher priority than global in ConfigLoader.
+  // Write local first so runtime state changes immediately, then sync global for future runs.
+  await runConfigCommandExpectSuccess(["set", key, raw]);
+  await runConfigCommandExpectSuccess(["set", key, raw, "--global"]);
+}
+
 // Inner App component that has access to ThemeProvider context
 function AppInner({ config }: { config: AUQConfig }) {
   const { cycleTheme, theme } = useTheme();
@@ -262,12 +278,7 @@ function AppInner({ config }: { config: AUQConfig }) {
   const setTmuxAutoSwitchEnabled = useCallback(
     async (enabled: boolean) => {
       try {
-        await runConfigCommandExpectSuccess([
-          "set",
-          "tmux.autoSwitch.enabled",
-          String(enabled),
-          "--global",
-        ]);
+        await setTmuxConfigBoolean("tmux.autoSwitch.enabled", enabled);
         setTmuxAutoSwitchEnabledState(enabled);
         showToast(
           enabled ? "Tmux 自動切換已啟用" : "Tmux 自動切換已停用",
@@ -835,27 +846,12 @@ function AppInner({ config }: { config: AUQConfig }) {
     if (key.name === "return") {
       const enabled = tmuxPromptState.focusedIndex === 0;
       const askOnFirstTmux = !tmuxPromptState.dontAskAgain;
-      void runConfigCommandExpectSuccess([
-        "set",
-        "tmux.autoSwitch.enabled",
-        String(enabled),
-        "--global",
-      ])
+      void setTmuxConfigBoolean("tmux.autoSwitch.enabled", enabled)
         .then(() =>
-          runConfigCommandExpectSuccess([
-            "set",
-            "tmux.autoSwitch.prompted",
-            "true",
-            "--global",
-          ]),
+          setTmuxConfigBoolean("tmux.autoSwitch.prompted", true),
         )
         .then(() =>
-          runConfigCommandExpectSuccess([
-            "set",
-            "tmux.autoSwitch.askOnFirstTmux",
-            String(askOnFirstTmux),
-            "--global",
-          ]),
+          setTmuxConfigBoolean("tmux.autoSwitch.askOnFirstTmux", askOnFirstTmux),
         )
         .then(() => setTmuxAutoSwitchEnabledState(enabled))
         .catch((error) => {
