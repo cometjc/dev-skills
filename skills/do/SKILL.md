@@ -136,6 +136,26 @@ Apply the first matching route and stop.
 - `pld` start message:
   - _"Proceeding with pld execution. Stop me now if you need single-thread execution (executing-plans) to follow the details directly."_
 
+**(10.a) PLD dispatch mode contract (`auto` / `streaming` / `wave`)**
+- When route (3.b) or (3.d independent) selects `pld`, set `dispatch_mode` before first launch:
+  - `auto` (default): detect executor/agent capability and choose `streaming` when safe, else `wave`.
+  - `streaming`: asynchronous lane progression; refill immediately when a slot frees.
+  - `wave`: batch-only progression; dispatch one wave, wait for all in-wave results, then schedule next wave.
+- If capability is mixed, allow per-lane mixed execution in one run:
+  - async-capable lanes keep `streaming`
+  - barrier-constrained lanes stay `wave`
+  - coordinator keeps one executor state surface (no split truth).
+- Do not ask the user to choose dispatch mode unless a high-cost trade-off is unresolved; otherwise default to `auto`.
+
+**(10.b) Quiet-autopilot (reduced user interruption)**
+- During PLD execution, continue dispatch/review/refill without per-lane confirmation prompts.
+- User-facing interruption is allowed only for:
+  - AUQ high-cost decision gates
+  - repeated lane failure escalation threshold
+  - all lanes blocked / no safe dispatchable work
+  - irreversible integration action requiring explicit confirmation by policy.
+- For normal progress, emit concise progress snapshots instead of questions.
+
 **(11) Worktree policy**
 - Require `using-git-worktrees` before concurrent execution routes (`pld`, `dispatching-parallel-agents`).
 - Single-thread `executing-plans` may skip worktree only when risk is low.
@@ -171,17 +191,19 @@ Set `PLD_TOOL_CMD` to the project-valid command first.
 - `$PLD_TOOL_CMD --role coordinator go --json`
 
 **Coder lane cycle (per lane item)**
-- `$PLD_TOOL_CMD --role coder claim-assignment --execution <id> --lane "<Lane N>" --json`
+- `$PLD_TOOL_CMD --role worker claim-assignment --execution <id> --lane "<Lane N>" --json`
 - implement + verify in assigned worktree
-- `$PLD_TOOL_CMD --role coder report-result --execution <id> --lane "<Lane N>" --status <status> --summary "<short summary>" --json`
+- `$PLD_TOOL_CMD --role worker report-result --execution <id> --lane "<Lane N>" --status <status> --result-branch <branch> --verification-summary "<short summary>" --json`
+- If the environment still emits `--role coder`, treat `E_ROLE_ALIAS_REJECTED` as an auto-recoverable tooling mismatch and retry once with `--role worker` before escalating.
 
 **Reviewer gate cycle (fresh reviewer subagent each gate)**
 - For each review gate (spec compliance, then code quality), run `$PLD_TOOL_CMD --role reviewer report-result ...` using the **reviewer `--status` tokens** named in `skills/pld/spec/PLD/canonical-contract.md` (and accepted by this repo’s `pld-tool` build). Put the human-readable PASS/FAIL rationale in `--verification-summary` / payload fields as required by your lane prompt — do **not** treat narrative “pass/fail” wording as a second canonical status system.
 - on fail: coder fixes and reports; then spawn a new reviewer for re-review.
 
 **Batch synchronization cadence**
-- run one `audit --json` after each macro step (dispatch wave, review wave, refill)
-- avoid tight polling loops; use batch snapshots for orchestration decisions.
+- `streaming` mode: run `audit --json` at macro checkpoints and after each refill burst (not every single lane event).
+- `wave` mode: run one `audit --json` at the end of each full wave and before launching the next wave.
+- avoid tight polling loops; use scheduler snapshots for orchestration decisions.
 
 **Escalation trigger**
 - if the same lane reaches 3 consecutive review-gate failures (per `skills/pld/spec/PLD/canonical-contract.md`), raise AUQ escalation and mark affected slices blocked until recovery decision arrives.
@@ -282,6 +304,9 @@ Validate routing behavior with these checks:
 - (6) path B approach choice -> A/B/C recommendation selected via AUQ
 - `pld` non-blocking AUQ -> pending answer blocks only affected slices while independent lanes keep running
 - `pld` escalation policy -> same lane review-gate failures escalate after 3 consecutive failures (see `skills/pld/spec/PLD/canonical-contract.md`)
+- `pld` dispatch mode `auto` -> selects `streaming` when async capability exists, else `wave`
+- mixed-capability execution -> async lanes keep progressing while wave-constrained lanes wait at barrier
+- quiet-autopilot -> no per-lane confirmation prompts during normal progression
 - (15) base-branch detection -> base branch auto-detected from `origin/HEAD` or repository policy fallback
 - (15) post-plan cleanup gate -> cleanup is blocked when commits are not yet on base branch
 - (15) defer-integration exception -> status set to `implemented_not_integrated` and cleanup skipped
@@ -349,6 +374,9 @@ For PLD-routed runs, add these normalized fields to execution notes:
 - `blocked_slices`: `[slice_id...]` (empty when none)
 - `lane_failure_counter`: `{ "<execution>/<lane>": <n> }`
 - `resume_event`: `answered|pending|timeout|none`
+- `dispatch_mode`: `auto|streaming|wave`
+- `scheduler_barrier`: `none|wave_waiting|mixed`
+- `user_interrupt_reason`: `auq_gate|escalation|all_blocked|irreversible_action|none`
 
 ## Minimal Verification Commands
 

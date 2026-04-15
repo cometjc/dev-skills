@@ -2,7 +2,7 @@
 
 > **Canonical contract:** Allowed **status** strings, **phase** names, **transition rules**, **error codes**, **role ACL** for `pld-tool`, and **commit ownership** are defined in `skills/pld/spec/PLD/canonical-contract.md`. This document describes coordination policy and workflows; on naming or transition conflicts, follow **`canonical-contract.md`** and then update this file to match.
 
-> **PLD** (parallel-lane-dev) names the multi-lane subagent execution model in this repo. Orchestration goes through a repo-local central executor (`.pld/executor.sqlite` + `<PLD-tree>/scripts/pld-tool.cjs`, where the PLD tree is e.g. repo-root `PLD/` or `plugins/parallel-lane-dev/` in this monorepo). Legacy markdown/json/ndjson surfaces may still exist during migration; they are **not** a second **state-changing** write path. Human-readable lane plans under `PLD/executions/` remain valid **import sources** and documentation, but **runtime truth** stays in the executor after import.
+> **PLD** (parallel-lane-dev) names the multi-lane subagent execution model in this repo. Orchestration goes through a repo-local central executor (`.pld/executor.sqlite` + `skills/pld/scripts/pld-tool.cjs`). Human-readable lane plans live under `docs/plans/<execution>/run-*-lane-*.md`; they are import sources and documentation, but **runtime truth** stays in the executor after import. Legacy `PLD/executions/*` is migration-only and must be moved on startup.
 
 **pld-tool:** The CLI defaults to role **`worker`** (lane implementer ACL); **`import-plans`**, **`go`**, and other coordinator-only commands require **`--role coordinator`** (or **`PLD_ROLE=coordinator`**). Coder and reviewer subagents perform claim/report transitions via **`pld-tool`**; the Coordinator (main agent) imports plans and sets policy but must not become the only channel for hot-path state writes. **Final merge** to the integration/mainline branch is **Coordinator-only**; plugin agents **`pld-coder`** and **`pld-reviewer`** (`agents/*.md`) document which **`pld-tool`** subcommands each role may run.
 
@@ -25,7 +25,7 @@
   - lane ownership families
   - lane worktree naming convention
   - lane-local verification commands
-- Every execution’s **scheduling and lane state** must live in the executor database after dispatch begins. Tracked markdown under `PLD/executions/` (and similar) is the **authoritative plan text** for humans and for `import-plans`, but it does not replace SQLite for **current** lane phase, assignments, reviews, or results.
+- Every execution’s **scheduling and lane state** must live in the executor database after dispatch begins. Tracked markdown under `docs/plans/<execution>/` is the **authoritative plan text** for humans and for `import-plans`, but it does not replace SQLite for **current** lane phase, assignments, reviews, or results.
 - `plan/` should be empty before dispatch starts; any remaining plan file must be imported into the executor first.
 - Executor SQLite is the only state-changing write interface for plan state, lane state, assignment state, review state, and result state.
 - `PLD/scoreboard.md`, `PLD/state/*`, and lane `Current Lane Status` sections are legacy migration surfaces only. They may be rendered for humans during transition, but they are not allowed to become a second writable truth.
@@ -196,5 +196,5 @@
 ## Current Repo Defaults
 
 - `plot-mode` is the first full PLD execution.
-- The existing lane worktrees remain valid, but their source of truth moves under `PLD/executions/plot-mode/`.
+- The existing lane worktrees remain valid, but their source of truth moves under `docs/plans/plot-mode/`.
 - Future multi-agent streams should start from PLD directly rather than cloning earlier fixed-4-lane naming.
