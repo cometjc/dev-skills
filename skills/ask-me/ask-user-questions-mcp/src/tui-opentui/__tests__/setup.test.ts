@@ -6,6 +6,7 @@ import {
   makeSessionUIState,
 } from "./fixtures.js";
 import { makeTestConfig, makeDimensions } from "./test-utils.js";
+import { DEFAULT_CONFIG } from "../../config/defaults.js";
 
 describe("OpenTUI Test Harness", () => {
   test("fixtures: makeSessionRequest creates valid session", () => {
@@ -38,7 +39,7 @@ describe("OpenTUI Test Harness", () => {
 
   test("test-utils: makeTestConfig creates config with defaults", () => {
     const config = makeTestConfig();
-    expect(config.renderer).toBe("ink");
+    expect(config.renderer).toBe(DEFAULT_CONFIG.renderer);
     expect(config.maxQuestions).toBe(5);
   });
 
