@@ -7,6 +7,20 @@ description: "Use when requests need governance routing across planning/debuggin
 
 Route a request to the correct Superpowers workflow and enforce execution guardrails.
 
+## Default `/do` invocation (chained skills)
+
+Unless a **higher-priority** row in the routing table matches first, treat:
+
+`/do <request>`
+
+as semantically equivalent to:
+
+`/do /brainstorming /grill-me /ask-me <request>`
+
+Meaning: run the **brainstorming** discovery/design flow, then **grill-me** branch-by-branch resolution, and handle **every** user-facing question in those phases through **`ask-me`** (AUQ MCP per `ask-me`), not plain-chat Q&A or ad-hoc multiple choice.
+
+**Does not apply** when an earlier table hit applies (for example: `/do ~N`, `fix-errors` with non-empty todo, explicit single-thread preference, existing plan-execution intent, straightforward bugfix/test-fix, or independent multi-domain `dispatching-parallel-agents`). Those routes keep their existing behavior.
+
 ## Dependencies
 
 ### Routing and Discovery
@@ -55,7 +69,7 @@ Apply the first matching route and stop.
 | New feature or non-obvious bugfix | (3.e) | Spec clarification path (B) |
 | Straightforward bugfix/test-fix | (3.f) | `systematic-debugging` direct |
 | Multi-domain independent subproblems (>=2) | (3.g) | `dispatching-parallel-agents` |
-| Unclear scope/new behavior fallback | (3.h) | `brainstorming` |
+| Unclear scope/new behavior fallback | (3.h) | Spec clarification path (B) |
 
 **(1) AUQ continuity gate first**
 - If pending user feedback exists (open AUQ session or unresolved feedback state), call `get_answered_questions` before any execution route.
@@ -74,22 +88,25 @@ Apply the first matching route and stop.
   - otherwise evaluate independence:
     - independent tasks -> `subagent-driven-development` (notify + start)
     - strongly sequential -> `executing-plans`
-- **(3.e)** New feature or non-obvious bugfix -> `brainstorming` + `grill-me` before `writing-plans`.
+- **(3.e)** New feature or non-obvious bugfix -> `brainstorming` + `grill-me` + `ask-me` (path B) before `writing-plans`.
 - **(3.f)** Straightforward bugfix/test-fix -> `systematic-debugging` direct execution.
 - **(3.g)** Independent multi-domain subproblems (>=2, truly independent) -> `dispatching-parallel-agents`.
-- **(3.h)** Fallback unclear scope/new behavior -> `brainstorming`.
+- **(3.h)** Fallback unclear scope/new behavior -> same as (3.e): `brainstorming` + `grill-me` + `ask-me` (path B) before `writing-plans`.
 
-### B. Spec Clarification Path (for route 3.e)
+### B. Spec Clarification Path (for routes 3.e and 3.h)
 
 **(4) Brainstorming phase**
 - Run full `brainstorming` gate: design -> spec write -> spec review loop -> user review.
+- Under `/do`, **do not** substitute plain-chat or inline multiple-choice for user input: any elicitation that would be a user question must go through **`ask-me`** (AUQ), following `ask-me` question schema and templates.
 
 **(5) Grill-me phase**
 - Use `grill-me` to resolve decision branches and dependencies one-by-one.
+- Each grill-me question to the user is an **`ask-me`** (AUQ) turn, not plain chat (same hard rule as (4)).
 
 **(6) AUQ decision gate during spec**
 - Unresolved key design decisions must use AUQ (`ask-me`), not plain chat.
 - For multiple viable approaches (A/B/C), final selection must be asked via AUQ.
+- This applies throughout path B, including phases (4) and (5); plain-chat substitution remains forbidden.
 
 **(7) Spec handoff quality gate**
 - Do not send path-only prompts.
@@ -170,6 +187,8 @@ Apply the first matching route and stop.
 
 `do` keeps only AUQ trigger conditions and hard gates. Question wording, options, batching, and templates are fully delegated to `ask-me`.
 
+For the default `/do` chained stack (`brainstorming` + `grill-me`), treat **all** user prompts that would otherwise appear as chat questions as **`ask-me`** invocations (see Default `/do` invocation above).
+
 - Trigger AUQ when a key decision is not finalized and cannot be derived from context.
 - Mandatory AUQ gate before execution when unresolved decision carries high-cost side effects.
 - Hard gate: pending feedback must be resolved through AUQ tooling before route execution.
@@ -207,7 +226,9 @@ Validate routing behavior with these checks:
 - (3.a) `/do ~N` -> lists session-task status only
 - (1) pending user feedback -> AUQ continuity gate runs before route selection/execution
 - (3.f) straightforward bugfix/test-fix -> `systematic-debugging` direct execution
-- (3.e) non-obvious feature/bugfix -> `brainstorming` + `grill-me` first
+- (3.e) non-obvious feature/bugfix -> path B: `brainstorming` + `grill-me` + `ask-me` first
+- (3.h) unclear fallback -> same path B stack as (3.e)
+- default `/do` (no higher-priority hit) -> path B user questions only via `ask-me` (no plain-chat substitution)
 - (3.c) explicit single-thread request -> `executing-plans`
 - (3.b) `fix-errors` with non-empty todo -> direct `subagent-driven-development`
 - (3.d) existing plan-execution intent + independent tasks -> `subagent-driven-development`
@@ -221,8 +242,8 @@ Validate routing behavior with these checks:
 - mandatory AUQ gate -> unresolved high-cost key decision blocks execution until explicit AUQ answer
 - AUQ pending-feedback gate -> unresolved feedback state is polled/handled via AUQ before execution
 - (9) plan-complete execution choice -> `Subagent-Driven` vs `Inline Execution` is asked via AUQ (no plain chat choice prompt)
-- (6) route (3.e) key decisions -> AUQ tool used (no plain-chat substitution)
-- (6) route (3.e) approach choice -> A/B/C recommendation selected via AUQ
+- (6) path B (3.e, 3.h) key decisions -> AUQ tool used (no plain-chat substitution)
+- (6) path B approach choice -> A/B/C recommendation selected via AUQ
 - (15) base-branch detection -> base branch auto-detected from `origin/HEAD` or repository policy fallback
 - (15) post-plan cleanup gate -> cleanup is blocked when commits are not yet on base branch
 - (15) defer-integration exception -> status set to `implemented_not_integrated` and cleanup skipped
