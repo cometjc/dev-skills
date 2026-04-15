@@ -1,6 +1,6 @@
 # Lane 4 - Test Matrix and Migration Notes
 
-PLD worktree: `docs/plans/do-pld-strict-canonical/run-migrated-lane-4`
+PLD worktree: `docs/plans/2026-04-15-do-pld-replacement/run-migrated-lane-4`
 
 > Ownership family:
 > `skills/pld/scripts/__tests__/`

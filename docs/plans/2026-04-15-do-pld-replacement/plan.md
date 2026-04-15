@@ -1,6 +1,6 @@
-# do-pld-strict-canonical Plan
+# 2026-04-15-do-pld-replacement Plan
 
-This directory is the canonical execution-plan root for the `do-pld-strict-canonical` run.
+This directory is the canonical execution-plan root for the `2026-04-15-do-pld-replacement` run.
 
 - Lane plan docs: `run-*-lane-*.md`
 - Lane worktrees (runtime, not tracked by default): `run-*-lane-*` directories
