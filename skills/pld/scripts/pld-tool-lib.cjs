@@ -1142,6 +1142,24 @@ values (
   return assignment;
 }
 
+const CANONICAL_REPORT_RESULT_STATUSES = new Set([
+  'RUNNING',
+  'BLOCKED',
+  'READY_TO_COMMIT',
+  'READY_FOR_REVIEW',
+  'DONE',
+  'FAILED',
+  'CANCELLED',
+]);
+
+function validateReportResultStatus(status) {
+  if (!CANONICAL_REPORT_RESULT_STATUSES.has(status)) {
+    throw new Error(
+      `E_STATUS_INVALID: "${status}" is not a canonical report-result status (see skills/pld/spec/PLD/canonical-contract.md)`,
+    );
+  }
+}
+
 function mapResultStatusToLanePhase(status) {
   switch (status) {
     case 'RUNNING':
@@ -1228,6 +1246,7 @@ where execution_name = ${sqliteEscape(execution)} and lane_name = ${sqliteEscape
 }
 
 module.exports = {
+  CANONICAL_REPORT_RESULT_STATUSES,
   buildCycleFromExecutor,
   buildCoordinatorLoopFromExecutor,
   buildLaunchFromExecutor,
@@ -1255,4 +1274,5 @@ module.exports = {
   validateReportResultArgs,
   validateReportResultPayload,
   validateReportResultTransition,
+  validateReportResultStatus,
 };

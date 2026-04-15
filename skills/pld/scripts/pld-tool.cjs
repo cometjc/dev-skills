@@ -132,6 +132,7 @@ function usage() {
     '  go [--json]',
     '  claim-assignment --execution <id> --lane <Lane N> [--json]',
     '  report-result --execution <id> --lane <Lane N> --status <STATUS> --result-branch <branch> [--verification-summary <text>] [--json]',
+    '    STATUS must be a literal from skills/pld/spec/PLD/canonical-contract.md (strict; legacy aliases rejected).',
     '',
     'Roles: coordinator = all commands; worker = audit, claim-assignment, report-result; reviewer = audit, report-result',
   ].join('\n');
