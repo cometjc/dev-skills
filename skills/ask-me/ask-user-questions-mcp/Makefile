@@ -1,9 +1,11 @@
-.PHONY: all build link
+.PHONY: all disk build link
 
-all: link
+all: disk
 
-build:
+disk:
 	bun run build
 
-link: build
+build: disk
+
+link: disk
 	bun link

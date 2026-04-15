@@ -12,17 +12,33 @@ export function selectLatestReachableLocation(
 
 export function resolveAuqSwitchTarget(args: {
   currentLocation: string | null;
+  preferredLocation: string | null;
   lastUsedLocation: string | null;
   reachableLocations: string[];
 }): string | null {
-  const { currentLocation, lastUsedLocation, reachableLocations } = args;
-  if (lastUsedLocation && reachableLocations.includes(lastUsedLocation)) {
+  const {
+    currentLocation,
+    preferredLocation,
+    lastUsedLocation,
+    reachableLocations,
+  } = args;
+  if (
+    preferredLocation &&
+    reachableLocations.includes(preferredLocation) &&
+    (!currentLocation || preferredLocation !== currentLocation)
+  ) {
+    return preferredLocation;
+  }
+  if (
+    lastUsedLocation &&
+    reachableLocations.includes(lastUsedLocation) &&
+    (!currentLocation || lastUsedLocation !== currentLocation)
+  ) {
     return lastUsedLocation;
   }
-  const fallback = reachableLocations[0] ?? null;
+  const fallback =
+    reachableLocations.find((location) => !currentLocation || location !== currentLocation) ??
+    null;
   if (!fallback) return null;
-  if (currentLocation && fallback === currentLocation) {
-    return null;
-  }
   return fallback;
 }

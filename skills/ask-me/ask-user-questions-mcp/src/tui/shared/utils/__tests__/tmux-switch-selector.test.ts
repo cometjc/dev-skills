@@ -9,6 +9,7 @@ describe("tmux switch selector", () => {
   it("uses last used location when still reachable", () => {
     const target = resolveAuqSwitchTarget({
       currentLocation: "main:1.0",
+      preferredLocation: null,
       lastUsedLocation: "dev:3.1",
       reachableLocations: ["dev:3.1", "ops:2.0"],
     });
@@ -18,6 +19,7 @@ describe("tmux switch selector", () => {
   it("falls back to latest reachable location", () => {
     const target = resolveAuqSwitchTarget({
       currentLocation: "main:1.0",
+      preferredLocation: null,
       lastUsedLocation: "stale:9.0",
       reachableLocations: ["ops:2.0"],
     });
@@ -27,10 +29,31 @@ describe("tmux switch selector", () => {
   it("returns null when fallback equals current location", () => {
     const target = resolveAuqSwitchTarget({
       currentLocation: "main:1.0",
+      preferredLocation: null,
       lastUsedLocation: null,
       reachableLocations: ["main:1.0"],
     });
     expect(target).toBeNull();
+  });
+
+  it("skips last-used when it equals current location", () => {
+    const target = resolveAuqSwitchTarget({
+      currentLocation: "main:1.0",
+      preferredLocation: null,
+      lastUsedLocation: "main:1.0",
+      reachableLocations: ["main:1.0", "auq:2.1"],
+    });
+    expect(target).toBe("auq:2.1");
+  });
+
+  it("prefers current AUQ instance location when reachable", () => {
+    const target = resolveAuqSwitchTarget({
+      currentLocation: "main:1.0",
+      preferredLocation: "main:0.0",
+      lastUsedLocation: "dev:3.1",
+      reachableLocations: ["main:0.0", "dev:3.1"],
+    });
+    expect(target).toBe("main:0.0");
   });
 
   it("selects newest updated instance location", () => {

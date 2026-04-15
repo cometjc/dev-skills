@@ -2,10 +2,12 @@ import { createCliRenderer } from "@opentui/core";
 import { createRoot, useKeyboard } from "@opentui/react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { promises as fs } from "fs";
+import os from "node:os";
+import path from "node:path";
 
 import type { AUQConfig } from "../config/types.js";
 import { DEFAULT_CONFIG } from "../config/defaults.js";
-import { getConfig } from "../config/index.js";
+import { reloadConfig } from "../config/index.js";
 import { ConfigProvider } from "./ConfigContext.js";
 import { ErrorBoundary } from "./components/ErrorBoundary.js";
 import { ThemeProvider, useTheme } from "./ThemeProvider.js";
@@ -43,6 +45,7 @@ import type { UpdateInfo } from "../update/types.js";
 import { KEYS } from "../tui/constants/keybindings.js";
 import { runConfigCommand } from "../cli/commands/config.js";
 import {
+  getCurrentAttachedTmuxLocation,
   getCurrentTmuxLocation,
   isRunningInTmux,
   selectTmuxLocation,
@@ -128,6 +131,17 @@ function isTelegramConfigured(telegram: {
   );
 }
 
+const TMUX_DEBUG_LOG_PATH =
+  process.env.AUQ_TMUX_DEBUG_LOG_PATH ||
+  path.join(os.homedir(), ".config", "auq", "tmux-debug.log");
+
+async function appendTmuxDebugLog(message: string): Promise<void> {
+  const timestamp = new Date().toISOString();
+  const line = `[${timestamp}] ${message}\n`;
+  await fs.mkdir(path.dirname(TMUX_DEBUG_LOG_PATH), { recursive: true });
+  await fs.appendFile(TMUX_DEBUG_LOG_PATH, line, "utf8");
+}
+
 function buildTelegramInitCommandArgs(values: {
   token: string;
   funnelMode: "auto" | "off";
@@ -166,6 +180,7 @@ async function runConfigCommandExpectSuccess(args: string[]): Promise<void> {
 // Inner App component that has access to ThemeProvider context
 function AppInner({ config }: { config: AUQConfig }) {
   const { cycleTheme, theme } = useTheme();
+  const tmuxDebugEnabled = process.env.AUQ_DEBUG === "1";
   const [state, setState] = useState<AppState>({ mode: "WAITING" });
   const [sessionQueue, setSessionQueue] = useState<SessionData[]>([]);
   const [activeSessionIndex, setActiveSessionIndex] = useState(0);
@@ -190,6 +205,9 @@ function AppInner({ config }: { config: AUQConfig }) {
     focusedIndex: 0,
     dontAskAgain: false,
   });
+  const [tmuxAutoSwitchEnabled, setTmuxAutoSwitchEnabledState] = useState(
+    config.tmux.autoSwitch.enabled,
+  );
   const tmuxRuntimeRef = useRef<{
     lastUsedAuqLocation: string | null;
     pendingReturnLocation: string | null;
@@ -225,7 +243,7 @@ function AppInner({ config }: { config: AUQConfig }) {
   );
 
   const syncTelegramRuntime = useCallback(async () => {
-    const latestConfig = getConfig();
+    const latestConfig = reloadConfig();
     if (!latestConfig.telegram.enabled) {
       await stopTelegramClientRuntime();
       return;
@@ -248,7 +266,9 @@ function AppInner({ config }: { config: AUQConfig }) {
           "set",
           "tmux.autoSwitch.enabled",
           String(enabled),
+          "--global",
         ]);
+        setTmuxAutoSwitchEnabledState(enabled);
         showToast(
           enabled ? "Tmux 自動切換已啟用" : "Tmux 自動切換已停用",
           "info",
@@ -263,9 +283,17 @@ function AppInner({ config }: { config: AUQConfig }) {
   );
 
   const handleToggleTmuxAutoSwitch = useCallback(() => {
-    const latest = getConfig();
+    const latest = reloadConfig();
     void setTmuxAutoSwitchEnabled(!latest.tmux.autoSwitch.enabled);
   }, [setTmuxAutoSwitchEnabled]);
+
+  const showTmuxDebug = useCallback(
+    (message: string) => {
+      if (!tmuxDebugEnabled) return;
+      void appendTmuxDebugLog(message);
+    },
+    [tmuxDebugEnabled],
+  );
 
   const handleWaitingTelegramInit = useCallback(
     async (values: { token: string; funnelMode: "auto" | "off"; webhookUrl?: string }) => {
@@ -284,7 +312,7 @@ function AppInner({ config }: { config: AUQConfig }) {
   );
 
   const handleWaitingTelegramToggle = useCallback(async () => {
-    const latest = getConfig();
+    const latest = reloadConfig();
     const nextEnabled = !latest.telegram.enabled;
     try {
       await runConfigCommandExpectSuccess(buildTelegramToggleCommandArgs(nextEnabled));
@@ -378,8 +406,24 @@ function AppInner({ config }: { config: AUQConfig }) {
   }, [syncTelegramRuntime]);
 
   useEffect(() => {
+    const sync = () => {
+      const latest = reloadConfig();
+      setTmuxAutoSwitchEnabledState((prev) =>
+        prev === latest.tmux.autoSwitch.enabled
+          ? prev
+          : latest.tmux.autoSwitch.enabled,
+      );
+    };
+
+    sync();
+    const interval = setInterval(sync, 1500);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
     if (!isRunningInTmux()) return;
-    const latest = getConfig();
+    const latest = reloadConfig();
+    setTmuxAutoSwitchEnabledState(latest.tmux.autoSwitch.enabled);
     if (!latest.tmux.autoSwitch.askOnFirstTmux || latest.tmux.autoSwitch.prompted) return;
     const location = getCurrentTmuxLocation();
     tmuxRuntimeRef.current.lastUsedAuqLocation = location;
@@ -456,24 +500,30 @@ function AppInner({ config }: { config: AUQConfig }) {
 
   useEffect(() => {
     if (!isRunningInTmux()) return;
-    const latest = getConfig();
-    if (!latest.tmux.autoSwitch.enabled) return;
+    if (!tmuxAutoSwitchEnabled) return;
     if (state.mode !== "PROCESSING") return;
     const activeSession = sessionQueue[activeSessionIndex];
     if (!activeSession) return;
     if (tmuxRuntimeRef.current.switchedSessionId === activeSession.sessionId) return;
 
-    const currentLocation = getCurrentTmuxLocation();
-    if (!currentLocation) return;
+    const currentLocation = getCurrentAttachedTmuxLocation();
+    if (!currentLocation) {
+      showTmuxDebug("skip: 無法取得目前 attached tmux location");
+      return;
+    }
 
     const resolveTarget = async (): Promise<string | null> => {
       const lastUsed = tmuxRuntimeRef.current.lastUsedAuqLocation;
       const instances = await listReachableTmuxInstances();
-      const reachable = instances
-        .map((x) => x.location)
-        .filter((loc) => isTmuxLocationReachable(loc));
+      const reachableInstances = instances
+        .filter((x) => isTmuxLocationReachable(x.location))
+        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+      const preferredLocation =
+        reachableInstances.find((x) => x.state === "questioning")?.location ?? null;
+      const reachable = reachableInstances.map((x) => x.location);
       const target = resolveAuqSwitchTarget({
         currentLocation,
+        preferredLocation,
         lastUsedLocation: lastUsed,
         reachableLocations: reachable,
       });
@@ -481,38 +531,56 @@ function AppInner({ config }: { config: AUQConfig }) {
     };
 
     void resolveTarget().then((targetLocation) => {
-      if (!targetLocation) return;
+      if (!targetLocation) {
+        showTmuxDebug(`skip: 無可用 target (current=${currentLocation})`);
+        return;
+      }
       if (targetLocation === currentLocation) {
         tmuxRuntimeRef.current.pendingReturnLocation = null;
         tmuxRuntimeRef.current.switchedSessionId = activeSession.sessionId;
         tmuxRuntimeRef.current.lastUsedAuqLocation = targetLocation;
+        showTmuxDebug(`skip: target 與 current 相同 (${currentLocation})`);
         return;
       }
 
       tmuxRuntimeRef.current.pendingReturnLocation = currentLocation;
       tmuxRuntimeRef.current.switchedSessionId = activeSession.sessionId;
       tmuxRuntimeRef.current.lastUsedAuqLocation = targetLocation;
+      showTmuxDebug(`switch: ${currentLocation} -> ${targetLocation}`);
       if (!selectTmuxLocation(targetLocation)) {
+        showTmuxDebug(`switch failed: ${currentLocation} -> ${targetLocation}`);
         showToast("Tmux 自動切換失敗", "error", "Tmux");
       }
     });
-  }, [activeSessionIndex, sessionQueue, showToast, state.mode]);
+  }, [
+    activeSessionIndex,
+    sessionQueue,
+    showToast,
+    showTmuxDebug,
+    state.mode,
+    tmuxAutoSwitchEnabled,
+  ]);
 
   useEffect(() => {
     if (!isRunningInTmux()) return;
-    const latest = getConfig();
+    const latest = reloadConfig();
     if (!latest.tmux.autoSwitch.returnToSource) return;
     if (state.mode !== "WAITING") return;
     const targetLocation = tmuxRuntimeRef.current.pendingReturnLocation;
     const auqLocation = tmuxRuntimeRef.current.lastUsedAuqLocation;
     if (!targetLocation || !auqLocation) return;
-    const currentLocation = getCurrentTmuxLocation();
+    const currentLocation = getCurrentAttachedTmuxLocation();
     if (currentLocation === auqLocation) {
+      showTmuxDebug(`return: ${currentLocation} -> ${targetLocation}`);
       void selectTmuxLocation(targetLocation);
+    } else {
+      showTmuxDebug(
+        `skip return: current=${currentLocation ?? "null"}, auq=${auqLocation}`,
+      );
     }
     tmuxRuntimeRef.current.pendingReturnLocation = null;
     tmuxRuntimeRef.current.switchedSessionId = null;
-  }, [state.mode]);
+  }, [showTmuxDebug, state.mode]);
 
   // ── Stale detection + background session status polling ──────
   const sessionQueueRef = useRef(sessionQueue);
@@ -771,12 +839,14 @@ function AppInner({ config }: { config: AUQConfig }) {
         "set",
         "tmux.autoSwitch.enabled",
         String(enabled),
+        "--global",
       ])
         .then(() =>
           runConfigCommandExpectSuccess([
             "set",
             "tmux.autoSwitch.prompted",
             "true",
+            "--global",
           ]),
         )
         .then(() =>
@@ -784,8 +854,14 @@ function AppInner({ config }: { config: AUQConfig }) {
             "set",
             "tmux.autoSwitch.askOnFirstTmux",
             String(askOnFirstTmux),
+            "--global",
           ]),
         )
+        .then(() => setTmuxAutoSwitchEnabledState(enabled))
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : "Tmux 設定更新失敗";
+          showToast(message, "error", "Tmux");
+        })
         .finally(() =>
           setTmuxPromptState({
             visible: false,
@@ -803,7 +879,7 @@ function AppInner({ config }: { config: AUQConfig }) {
     if (key.ctrl || key.meta) return;
 
     if (key.name?.toLowerCase() !== "t") return;
-    const telegram = getConfig().telegram;
+    const telegram = reloadConfig().telegram;
     if (!isTelegramConfigured(telegram)) {
       setShowTelegramWizard(true);
       return;
