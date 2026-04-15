@@ -43,6 +43,7 @@ interface StepperViewProps {
   isAbandoned?: boolean;
   onAbandonedCancel?: () => void;
   onTelegramConfigChanged?: () => void;
+  onToggleTmuxAutoSwitch?: () => void;
 }
 
 export type TelegramShortcutOutcome = "ignore" | "setup" | "toggle";
@@ -142,6 +143,7 @@ export const StepperView: React.FC<StepperViewProps> = ({
   isAbandoned,
   onAbandonedCancel,
   onTelegramConfigChanged,
+  onToggleTmuxAutoSwitch,
 }) => {
   const { theme } = useTheme();
   const config = useConfig();
@@ -780,6 +782,11 @@ export const StepperView: React.FC<StepperViewProps> = ({
         void handleTelegramToggle();
         return;
       }
+    }
+
+    if (key.name?.toLowerCase() === "w" && !key.ctrl && !key.meta) {
+      onToggleTmuxAutoSwitch?.();
+      return;
     }
 
     // Esc key - show rejection confirmation

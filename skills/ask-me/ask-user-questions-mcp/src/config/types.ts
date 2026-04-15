@@ -23,6 +23,24 @@ export const TelegramConfigSchema = z.object({
 
 export type TelegramConfig = z.infer<typeof TelegramConfigSchema>;
 
+export const TmuxAutoSwitchConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  returnToSource: z.boolean().default(true),
+  prompted: z.boolean().default(false),
+  askOnFirstTmux: z.boolean().default(true),
+});
+
+export const TmuxConfigSchema = z.object({
+  autoSwitch: TmuxAutoSwitchConfigSchema.default({
+    enabled: false,
+    returnToSource: true,
+    prompted: false,
+    askOnFirstTmux: true,
+  }),
+});
+
+export type TmuxConfig = z.infer<typeof TmuxConfigSchema>;
+
 export const AUQConfigSchema = z.object({
   // Limits
   maxOptions: z.number().min(2).max(10).default(5),
@@ -59,6 +77,16 @@ export const AUQConfigSchema = z.object({
     webhookUrl: "",
     bindHost: "0.0.0.0",
     bindPort: 8080,
+  }),
+
+  // tmux
+  tmux: TmuxConfigSchema.default({
+    autoSwitch: {
+      enabled: false,
+      returnToSource: true,
+      prompted: false,
+      askOnFirstTmux: true,
+    },
   }),
 
   // Update

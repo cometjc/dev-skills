@@ -8,6 +8,7 @@ import { AnimatedGradient } from "./AnimatedGradient.js";
 interface WaitingScreenProps {
   queueCount: number;
   showTelegramShortcutHint?: boolean;
+  showTmuxShortcutHint?: boolean;
 }
 
 /**
@@ -17,6 +18,7 @@ interface WaitingScreenProps {
 export const WaitingScreen: React.FC<WaitingScreenProps> = ({
   queueCount,
   showTelegramShortcutHint = false,
+  showTmuxShortcutHint = false,
 }) => {
   const { theme } = useTheme();
 
@@ -67,7 +69,7 @@ export const WaitingScreen: React.FC<WaitingScreenProps> = ({
         </box>
         <box style={{ justifyContent: "center", marginTop: 1 }}>
           <text style={{ attributes: TextAttributes.DIM }}>
-            {`${t("waiting.hint")}${showTelegramShortcutHint ? " • T Telegram" : ""} • ${elapsedSeconds}s`}
+            {`${t("waiting.hint")}${showTelegramShortcutHint ? " • T Telegram" : ""}${showTmuxShortcutHint ? " • W Tmux" : ""} • ${elapsedSeconds}s`}
           </text>
         </box>
       </box>

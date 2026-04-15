@@ -11,24 +11,21 @@ import { runTelegramConfigCommand } from "./telegram-config.js";
  * E.g. ["maxOptions", "notifications.enabled", "notifications.sound", ...]
  */
 function getValidConfigKeys(): string[] {
-  const shape = AUQConfigSchema.shape;
   const keys: string[] = [];
-
-  for (const key of Object.keys(shape)) {
-    const fieldSchema = shape[key as keyof typeof shape];
-    // Check if this is a nested object schema (z.object wrapped in z.ZodDefault)
-    const inner = getInnerSchema(fieldSchema);
-    if (inner && "shape" in inner && typeof inner.shape === "object") {
-      // It's a nested object — add dot-notated keys
-      for (const subKey of Object.keys(
-        inner.shape as Record<string, unknown>,
-      )) {
-        keys.push(`${key}.${subKey}`);
+  const walk = (schema: unknown, prefix = ""): void => {
+    const inner = getInnerSchema(schema);
+    if (inner && typeof inner === "object" && "shape" in inner) {
+      const shape = (inner as { shape: Record<string, unknown> }).shape;
+      for (const key of Object.keys(shape)) {
+        const path = prefix ? `${prefix}.${key}` : key;
+        walk(shape[key], path);
       }
-    } else {
-      keys.push(key);
+      return;
     }
-  }
+    if (prefix) keys.push(prefix);
+  };
+
+  walk(AUQConfigSchema);
 
   return keys;
 }
@@ -94,19 +91,13 @@ function setNestedValue(
  */
 function coerceValue(key: string, rawValue: string): unknown {
   const parts = key.split(".");
-  const shape = AUQConfigSchema.shape;
-
-  // Get the Zod schema for this key
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let fieldSchema: any = shape[parts[0] as keyof typeof shape];
-  if (!fieldSchema) return rawValue;
-
-  // Unwrap nested path
-  if (parts.length > 1) {
-    const innerObj = getInnerSchema(fieldSchema);
-    if (innerObj?.shape) {
-      fieldSchema = innerObj.shape[parts[1]];
-    }
+  let fieldSchema: unknown = AUQConfigSchema;
+  for (const part of parts) {
+    const inner = getInnerSchema(fieldSchema) as
+      | { shape?: Record<string, unknown> }
+      | undefined;
+    if (!inner?.shape || !(part in inner.shape)) return rawValue;
+    fieldSchema = inner.shape[part];
   }
 
   const inner = getInnerSchema(fieldSchema);
@@ -317,6 +308,10 @@ async function configSet(args: string[]): Promise<void> {
         staleAction:    'Expected: \"warn\", \"remove\", or \"archive\"',
         theme:          "Expected: a valid theme name (see auq config get theme)",
         language:       "Expected: a language code (e.g. \"en\", \"ko\")",
+        "tmux.autoSwitch.enabled": "Expected: true or false",
+        "tmux.autoSwitch.returnToSource": "Expected: true or false",
+        "tmux.autoSwitch.prompted": "Expected: true or false",
+        "tmux.autoSwitch.askOnFirstTmux": "Expected: true or false",
       };
       const hint = hints[key];
       process.stderr.write(
