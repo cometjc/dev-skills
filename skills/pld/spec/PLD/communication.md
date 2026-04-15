@@ -16,6 +16,11 @@
 - When an active slot opens, the coordinator may promote the next eligible queued lane into that slot.
 - Promotion should respect write-set overlap, lane priority, and the current execution's refill order.
 - Queued lanes stay in coordinator-visible state until they are promoted, blocked, or parked.
+- Dispatch behavior must follow one explicit `dispatch_mode` for the current execution:
+  - `streaming`: promote eligible lanes continuously as slots free.
+  - `wave`: promote a full wave, then wait on a wave barrier before next promotion.
+  - `auto`: select `streaming` when async dispatch is supported; otherwise degrade to `wave`.
+- Mixed-capability runs are allowed: some lanes may progress under `streaming` while barrier-constrained lanes wait under `wave`, but all transitions still write to one executor state surface.
 
 ## Allowed Status Values
 
@@ -90,6 +95,16 @@ These are **normalized executor / handoff statuses** (what `report-result` persi
 ## Coordinator Templates
 
 Generate coordinator-facing text from the template families in this document (or project-local npm helpers, if your repo wires them). Do **not** reference deprecated PLD shell paths from the pre-skills plugin layout; state changes belong in `.pld/executor.sqlite` via `node skills/pld/scripts/pld-tool.cjs` per `skills/pld/spec/PLD/canonical-contract.md`.
+
+### Quiet-autopilot notification policy
+
+- Coordinator should avoid asking for per-lane confirmation during normal dispatch/review/refill.
+- Emit concise progress snapshots in background while lanes are healthy.
+- Interrupt the user only for:
+  - AUQ high-cost decision gates
+  - repeated failure escalation threshold
+  - all lanes blocked / no safe dispatchable work
+  - irreversible integration action requiring explicit confirmation by policy.
 
 - When coordinator wants to collapse "reconcile stale lanes + promote next lanes + generate implementer-assignment text" into one deterministic pass, prefer `npm run pld:launch -- --execution <id>`. The launch helper should reuse the same implementer-assignment template rather than inventing a second dispatch wording.
 - When coordinator wants to collapse "inspect current review phases + decide the next spec/quality/correction/coordinator-commit step" into one deterministic pass, prefer `npm run pld:review -- --execution <id>`. The review helper should emit the same template families already defined below, not invent a separate review wording.

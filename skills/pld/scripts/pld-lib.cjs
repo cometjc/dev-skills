@@ -44,6 +44,7 @@ function resolvePldTreeDir(projectRoot = resolveProjectRoot()) {
 function findNearestPldRoot(startPath = process.cwd()) {
   let currentPath = path.resolve(startPath);
   const treeMarkers = [
+    ['docs', 'plans'],
     ['PLD'],
     ['plugins', 'parallel-lane-dev'],
     ['plugins', 'parallel-lane-dev', 'PLD'],
@@ -65,6 +66,18 @@ function findNearestPldRoot(startPath = process.cwd()) {
     }
     currentPath = parentPath;
   }
+}
+
+function resolvePlansRoot(projectRoot = resolveProjectRoot()) {
+  return path.join(projectRoot, 'docs', 'plans');
+}
+
+function executionPlanDir(projectRoot, execution) {
+  return path.join(resolvePlansRoot(projectRoot), execution);
+}
+
+function lanePlanFileNameRegex() {
+  return /^run-.+-lane-(\d+)\.md$/;
 }
 
 function resolveProjectRoot() {
@@ -445,7 +458,20 @@ function lanePlanPath(projectRoot, execution, lane) {
   if (!laneMatch) {
     return null;
   }
-  return path.join(resolvePldTreeDir(projectRoot), 'executions', execution, `lane-${laneMatch[1]}.md`);
+  const planDir = executionPlanDir(projectRoot, execution);
+  if (!fs.existsSync(planDir)) {
+    return null;
+  }
+  const laneNumber = laneMatch[1];
+  const candidates = fs
+    .readdirSync(planDir)
+    .filter((entry) => lanePlanFileNameRegex().test(entry))
+    .filter((entry) => entry.match(lanePlanFileNameRegex())[1] === laneNumber)
+    .sort((left, right) => left.localeCompare(right, 'en'));
+  if (candidates.length === 0) {
+    return null;
+  }
+  return path.join(planDir, candidates[candidates.length - 1]);
 }
 
 function parseLanePlan(text) {
@@ -687,18 +713,90 @@ function refreshProbe(head, statusOutput) {
 }
 
 function listExecutionLanes(projectRoot, execution) {
-  const executionDir = path.join(resolvePldTreeDir(projectRoot), 'executions', execution);
+  const executionDir = executionPlanDir(projectRoot, execution);
   if (!fs.existsSync(executionDir)) {
     return [];
   }
   return fs
     .readdirSync(executionDir)
-    .filter((entry) => /^lane-\d+\.md$/.test(entry))
+    .filter((entry) => lanePlanFileNameRegex().test(entry))
     .sort((a, b) => a.localeCompare(b, 'en'))
     .map((entry) => {
-      const laneNumber = entry.match(/^lane-(\d+)\.md$/)[1];
+      const laneNumber = entry.match(lanePlanFileNameRegex())[1];
       return `Lane ${laneNumber}`;
     });
+}
+
+function listExecutionNamesFromPlanDocs(projectRoot = resolveProjectRoot()) {
+  const plansRoot = resolvePlansRoot(projectRoot);
+  if (!fs.existsSync(plansRoot)) {
+    return [];
+  }
+  return fs
+    .readdirSync(plansRoot)
+    .filter((entry) => {
+      const candidate = path.join(plansRoot, entry);
+      if (!fs.existsSync(candidate) || !fs.statSync(candidate).isDirectory()) {
+        return false;
+      }
+      return fs.readdirSync(candidate).some((name) => lanePlanFileNameRegex().test(name));
+    })
+    .sort((a, b) => a.localeCompare(b, 'en'));
+}
+
+function migrateLegacyExecutionLayouts(projectRoot = resolveProjectRoot()) {
+  const legacyExecutionsDir = path.join(projectRoot, 'PLD', 'executions');
+  if (!fs.existsSync(legacyExecutionsDir)) {
+    return {migratedExecutionCount: 0, migratedLaneCount: 0};
+  }
+
+  const plansRoot = resolvePlansRoot(projectRoot);
+  fs.mkdirSync(plansRoot, {recursive: true});
+
+  let migratedExecutionCount = 0;
+  let migratedLaneCount = 0;
+  for (const execution of fs.readdirSync(legacyExecutionsDir)) {
+    const sourceDir = path.join(legacyExecutionsDir, execution);
+    if (!fs.statSync(sourceDir).isDirectory()) {
+      continue;
+    }
+    const laneFiles = fs.readdirSync(sourceDir).filter((name) => /^lane-\d+\.md$/.test(name));
+    if (laneFiles.length === 0) {
+      continue;
+    }
+    const targetDir = executionPlanDir(projectRoot, execution);
+    fs.mkdirSync(targetDir, {recursive: true});
+
+    for (const laneFile of laneFiles) {
+      const laneNumber = laneFile.match(/^lane-(\d+)\.md$/)[1];
+      const sourcePath = path.join(sourceDir, laneFile);
+      const targetName = `run-migrated-lane-${laneNumber}.md`;
+      const targetPath = path.join(targetDir, targetName);
+      if (fs.existsSync(targetPath)) {
+        throw new Error(`Legacy layout migration blocked: target already exists ${targetPath}`);
+      }
+      let text = fs.readFileSync(sourcePath, 'utf8');
+      text = text.replace(
+        /PLD worktree:\s*`([^`]+)`/,
+        `PLD worktree: \`docs/plans/${execution}/run-migrated-lane-${laneNumber}\``,
+      );
+      fs.writeFileSync(targetPath, text, 'utf8');
+      fs.unlinkSync(sourcePath);
+      migratedLaneCount += 1;
+    }
+
+    if (fs.readdirSync(sourceDir).length > 0) {
+      throw new Error(`Legacy layout migration blocked: leftover files in ${sourceDir}`);
+    }
+    fs.rmdirSync(sourceDir);
+    migratedExecutionCount += 1;
+  }
+
+  if (fs.existsSync(legacyExecutionsDir) && fs.readdirSync(legacyExecutionsDir).length === 0) {
+    fs.rmdirSync(legacyExecutionsDir);
+  }
+
+  return {migratedExecutionCount, migratedLaneCount};
 }
 
 function readRecentThreads(projectRoot, limit = 12) {
@@ -1090,6 +1188,8 @@ module.exports = {
   loadScoreboardTable,
   loadPreferredScoreboardTable,
   joinRow,
+  resolvePlansRoot,
+  executionPlanDir,
   lanePlanPath,
   parseLanePlan,
   loadLanePlan,
@@ -1105,6 +1205,8 @@ module.exports = {
   parseThreadSession,
   deriveEffectivePhase,
   formatLatestEvent,
+  listExecutionNamesFromPlanDocs,
+  migrateLegacyExecutionLayouts,
   formatIsoTimestamp,
   listExecutionLanes,
   computeLaneAutomation,

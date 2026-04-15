@@ -26,7 +26,7 @@ Use this skill to run parallel-lane execution with strict state authority in `pl
 From repo root:
 
 ```bash
-node skills/pld/scripts/pld-tool.cjs [--role coordinator|worker|coder|reviewer] <command> [options]
+node skills/pld/scripts/pld-tool.cjs [--role coordinator|worker|reviewer] <command> [options]
 ```
 
 This skill vendors executable PLD scripts under `skills/pld/scripts/`.
@@ -35,20 +35,35 @@ Use `--project-root` when orchestrating another workspace.
 ## Roles and permissions
 
 - `--role coordinator` (Main Agent): `import-plans`, `audit`, `go`, orchestration, integration decisions.
-- `--role worker` / `--role coder` (implementer): `claim-assignment`, `report-result`, optional read-only `audit`.
+- `--role worker` (implementer): `claim-assignment`, `report-result`, optional read-only `audit`.
 - `--role reviewer` (review gate): `report-result`, optional read-only `audit`, no `claim-assignment`.
 
 Default role is worker; coordinator must be explicit.
+
+## Dispatch mode and async policy
+
+- `dispatch_mode` controls how lanes advance:
+  - `auto` (default): choose `streaming` if runtime supports async refill, else `wave`.
+  - `streaming`: launch/review/refill can proceed asynchronously per lane as slots free.
+  - `wave`: launch in batches, wait for wave barrier, then schedule next wave.
+- Mixed capability is supported in one execution:
+  - async-capable lanes continue under `streaming`
+  - barrier-only lanes wait under `wave`
+  - coordinator still records one canonical state stream in executor SQLite.
+- Keep user interruption low:
+  - normal lane progression should not require per-lane user confirmations
+  - only interrupt for AUQ high-cost decisions, escalation thresholds, or full-blocked states.
 
 ## Standard execution loop
 
 1. Coordinator runs `import-plans` (if needed), then `audit --json`, then `go`.
 2. For each dispatchable lane, provision/verify worktree before coder spawn.
-3. Spawn `pld-coder` for one lane item, coder claims assignment, implements, verifies, reports result.
-4. Spawn `pld-reviewer` for the first review gate defined in `skills/pld/spec/PLD/canonical-contract.md`; if failed, coder fixes and a new reviewer re-runs that gate.
+3. Spawn implementer for one lane item, worker claims assignment, implements, verifies, reports result.
+4. Spawn `pld-reviewer` for the first review gate defined in `skills/pld/spec/PLD/canonical-contract.md`; if failed, implementer fixes and a new reviewer re-runs that gate.
 5. Spawn `pld-reviewer` for the second review gate; if failed, same fix/re-review loop.
-6. After macro steps, coordinator batch-syncs with `audit --json` and refills next items.
-7. Coordinator performs final merge/integration when policy gates are satisfied.
+6. `streaming` mode: refill immediately when safe; `wave` mode: refill only after wave barrier closes.
+7. After macro steps, coordinator batch-syncs with `audit --json`.
+8. Coordinator performs final merge/integration when policy gates are satisfied.
 
 ## Failure and escalation policy
 
@@ -56,6 +71,7 @@ Default role is worker; coordinator must be explicit.
 - Review always uses fresh reviewer subagent context.
 - If the same lane fails consecutive review gates (per `skills/pld/spec/PLD/canonical-contract.md`), escalate via AUQ policy defined by `do`.
 - Keep global throughput by continuing independent lanes while blocked slices wait for AUQ answers.
+- If runtime cannot support asynchronous refill, degrade to `wave` mode without requiring user intervention.
 
 ## Integration with `/do`
 
@@ -88,6 +104,7 @@ Default role is worker; coordinator must be explicit.
 ## Minimal evidence checklist
 
 - Route selection and why PLD path was chosen.
+- dispatch mode chosen (`auto|streaming|wave`) and why.
 - `audit --json` snapshots before/after dispatch waves.
 - `report-result` transitions for coder/spec/quality outcomes.
 - Escalation events (if any) and AUQ session linkage.

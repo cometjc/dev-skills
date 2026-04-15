@@ -21,6 +21,9 @@ Use this file to keep PLD execution predictable, low-conflict, and easy to revie
 
 ## Autopilot Refill
 
+- Every execution should declare `dispatch_mode` (`auto|streaming|wave`) before launch.
+- `auto` is preferred: use `streaming` when async-capable agents exist, otherwise degrade to `wave` without requiring user confirmation.
+- In mixed-capability runs, keep async-capable lanes moving while barrier-constrained lanes wait for wave completion.
 - Keep the configured active subagent cap saturated whenever there are enough non-overlapping lane items.
 - Lane pool size may exceed the active cap; extra lanes should remain queued or parked rather than stealing a running slot.
 - When an active slot opens, promote the next eligible queued lane whose write set does not overlap any active lane.
@@ -90,6 +93,8 @@ Use this file to keep PLD execution predictable, low-conflict, and easy to revie
 ## Communication Heuristics
 
 - Reviewer and implementer communication flows through coordinator sidecar mode.
+- Use quiet-autopilot by default: do not ask user confirmation for each lane transition.
+- User interruption is reserved for AUQ high-cost decisions, escalation thresholds, fully blocked queues, or irreversible integration actions.
 - Use fixed templates for:
   - implementer assignment
   - spec review

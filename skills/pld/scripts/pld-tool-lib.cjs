@@ -2,10 +2,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {execFileSync} = require('node:child_process');
 const {
+  listExecutionNamesFromPlanDocs,
   listExecutionLanes,
   loadLanePlan,
+  migrateLegacyExecutionLayouts,
   loadScoreboardTable,
-  resolvePldTreeDir,
   resolveProjectRoot,
   resolveScoreboardPath,
 } = require('./pld-lib.cjs');
@@ -508,6 +509,7 @@ values (${planId}, ${item.ordinal}, ${sqliteEscape(item.body)}, ${sqliteEscape(i
 }
 
 function importLegacyExecutionState(projectRoot = resolveProjectRoot()) {
+  const migration = migrateLegacyExecutionLayouts(projectRoot);
   ensureExecutorDb(projectRoot);
   const scoreboardPath = resolveScoreboardPath(projectRoot);
   const executions = new Set();
@@ -604,33 +606,25 @@ values (
     }
   }
 
-  // Also scan PLD/executions/ directories for execution names and lane plans
-  // so that listExecutionNames works even when no scoreboard is present.
-  const executionsDir = path.join(resolvePldTreeDir(projectRoot), 'executions');
-  if (fs.existsSync(executionsDir)) {
-    for (const entry of fs.readdirSync(executionsDir)) {
-      const entryPath = path.join(executionsDir, entry);
-      if (!fs.statSync(entryPath).isDirectory()) {
-        continue;
-      }
-      const execution = entry;
-      if (!executions.has(execution)) {
-        executions.add(execution);
+  // Scan docs/plans/<execution>/run-*-lane-*.md directories for execution names and lane plans.
+  for (const execution of listExecutionNamesFromPlanDocs(projectRoot)) {
+    if (!executions.has(execution)) {
+      executions.add(execution);
+      runSql(
+        projectRoot,
+        `insert or ignore into executions (execution_name, imported_at) values (${sqliteEscape(execution)}, ${sqliteEscape(now)});`,
+      );
+      for (const laneName of listExecutionLanes(projectRoot, execution)) {
+        const lanePlan = loadLanePlan(projectRoot, execution, laneName);
+        if (!lanePlan) {
+          continue;
+        }
+        const firstPending = lanePlan.actionableItems.find((item) => !item.checked);
+        const phase = firstPending ? 'queued' : 'parked';
+        const verification = JSON.stringify(lanePlan.verificationCommands || []);
         runSql(
           projectRoot,
-          `insert or ignore into executions (execution_name, imported_at) values (${sqliteEscape(execution)}, ${sqliteEscape(now)});`,
-        );
-        for (const laneName of listExecutionLanes(projectRoot, execution)) {
-          const lanePlan = loadLanePlan(projectRoot, execution, laneName);
-          if (!lanePlan) {
-            continue;
-          }
-          const firstPending = lanePlan.actionableItems.find((item) => !item.checked);
-          const phase = firstPending ? 'queued' : 'parked';
-          const verification = JSON.stringify(lanePlan.verificationCommands || []);
-          runSql(
-            projectRoot,
-            `
+          `
 insert or ignore into lanes (
   execution_name, lane_name, ownership, current_item, phase,
   last_verification, worktree_path, lane_branch, base_branch
@@ -646,10 +640,9 @@ values (
   ${sqliteEscape(laneBranchName(execution, laneName))},
   'main'
 );
-            `,
-          );
-          importedLaneCount += 1;
-        }
+          `,
+        );
+        importedLaneCount += 1;
       }
     }
   }
@@ -658,10 +651,13 @@ values (
     importedExecutionCount: executions.size,
     importedLaneCount,
     importedEventCount,
+    migratedExecutionCount: migration.migratedExecutionCount,
+    migratedLaneCount: migration.migratedLaneCount,
   };
 }
 
 function auditExecutor(projectRoot = resolveProjectRoot()) {
+  migrateLegacyExecutionLayouts(projectRoot);
   ensureExecutorDb(projectRoot);
   const planFiles = listPlanFiles(projectRoot).map((filePath) => path.relative(projectRoot, filePath));
   const pendingPlanCount = Number(runSql(projectRoot, "select count(*) from plans where status != 'completed';") || '0');
@@ -687,8 +683,11 @@ function goExecutor(projectRoot = resolveProjectRoot()) {
   if (audit.planFiles.length > 0) {
     throw new Error('plan/ must be empty before executor go can continue');
   }
+  const dispatch = resolveDispatchMode();
   return {
     status: audit.pendingPlanCount === 0 && audit.reviewLaneCount === 0 && audit.queuedLaneCount === 0 ? 'idle' : 'active',
+    dispatchMode: dispatch.mode,
+    dispatchModeSource: dispatch.source,
     ...audit,
   };
 }
@@ -747,17 +746,60 @@ order by lane_name;
   }));
 }
 
+function normalizeDispatchMode(input) {
+  if (!input) {
+    return null;
+  }
+  const normalized = String(input).trim().toLowerCase();
+  if (normalized === 'auto' || normalized === 'streaming' || normalized === 'wave') {
+    return normalized;
+  }
+  return null;
+}
+
+function detectAsyncDispatchCapability() {
+  const raw = process.env.PLD_SUPPORTS_ASYNC_DISPATCH;
+  if (raw == null || raw === '') {
+    return true;
+  }
+  const normalized = String(raw).trim().toLowerCase();
+  return !['0', 'false', 'no', 'off'].includes(normalized);
+}
+
+function resolveDispatchMode(explicitMode = null) {
+  const requested = normalizeDispatchMode(explicitMode) || normalizeDispatchMode(process.env.PLD_DISPATCH_MODE) || 'auto';
+  if (requested === 'streaming' || requested === 'wave') {
+    return {
+      requested,
+      mode: requested,
+      source: normalizeDispatchMode(explicitMode) ? 'explicit' : 'env',
+      asyncCapable: requested === 'streaming',
+    };
+  }
+  const asyncCapable = detectAsyncDispatchCapability();
+  return {
+    requested: 'auto',
+    mode: asyncCapable ? 'streaming' : 'wave',
+    source: 'auto-capability',
+    asyncCapable,
+  };
+}
+
 function buildCoordinatorLoopFromExecutor(
   projectRoot = resolveProjectRoot(),
   execution,
   maxActive = 4,
   dryRun = false,
+  options = {},
 ) {
   ensureExecutorDb(projectRoot);
   const lanes = listLanes(projectRoot, execution);
+  const dispatch = resolveDispatchMode(options.dispatchMode || null);
   const activeCount = lanes.filter((entry) => entry.phase === 'implementing').length;
   const availableSlots = Math.max(0, maxActive - activeCount);
-  const dispatchable = lanes.filter((entry) => entry.phase === 'queued').slice(0, availableSlots);
+  const queuedLanes = lanes.filter((entry) => entry.phase === 'queued');
+  const hasWaveBarrier = dispatch.mode === 'wave' && activeCount > 0;
+  const dispatchable = hasWaveBarrier ? [] : queuedLanes.slice(0, availableSlots);
   const idleSlots = Math.max(0, maxActive - activeCount - dispatchable.length);
   const reviewActions = lanes
     .filter((entry) => entry.resultStatus === 'READY_FOR_REVIEW')
@@ -803,7 +845,11 @@ function buildCoordinatorLoopFromExecutor(
       promoted: dispatchable.map((entry) => ({lane: entry.laneName})),
       completedLanes: [],
       idleSlots,
-      noDispatchReason: dispatchable.length === 0 ? 'no-dispatchable-lane' : null,
+      noDispatchReason: hasWaveBarrier
+        ? 'wave-barrier-waiting'
+        : dispatchable.length === 0
+          ? 'no-dispatchable-lane'
+          : null,
     },
     reviewActions,
     commitIntake: [],
@@ -813,7 +859,14 @@ function buildCoordinatorLoopFromExecutor(
     promotedLanes: dispatchable.map((entry) => entry.laneName),
     reviewLaneCount: reviewActions.length,
     commitLaneCount: 0,
-    noDispatchReason: dispatchable.length === 0 ? 'no-dispatchable-lane' : null,
+    noDispatchReason: hasWaveBarrier
+      ? 'wave-barrier-waiting'
+      : dispatchable.length === 0
+        ? 'no-dispatchable-lane'
+        : null,
+    dispatchMode: dispatch.mode,
+    dispatchModeSource: dispatch.source,
+    schedulerBarrier: hasWaveBarrier ? 'wave_waiting' : 'none',
     degradedSurfaces: [],
     telemetrySummary: null,
     telemetryReviewPath: null,
@@ -825,8 +878,9 @@ function buildCycleFromExecutor(
   execution,
   maxActive = 4,
   dryRun = false,
+  options = {},
 ) {
-  const coordinator = buildCoordinatorLoopFromExecutor(projectRoot, execution, maxActive, dryRun);
+  const coordinator = buildCoordinatorLoopFromExecutor(projectRoot, execution, maxActive, dryRun, options);
   return {
     source: 'executor',
     execution,
@@ -846,6 +900,9 @@ function buildCycleFromExecutor(
     idleSlots: coordinator.idleSlots,
     completedLanes: [],
     noDispatchReason: coordinator.noDispatchReason,
+    dispatchMode: coordinator.dispatchMode,
+    dispatchModeSource: coordinator.dispatchModeSource,
+    schedulerBarrier: coordinator.schedulerBarrier,
     finalSchedule: {
       source: 'executor',
       activeRows: [],
@@ -862,8 +919,9 @@ function buildLaunchFromExecutor(
   execution,
   maxActive = 4,
   dryRun = false,
+  options = {},
 ) {
-  const coordinator = buildCoordinatorLoopFromExecutor(projectRoot, execution, maxActive, dryRun);
+  const coordinator = buildCoordinatorLoopFromExecutor(projectRoot, execution, maxActive, dryRun, options);
   return {
     source: 'executor',
     execution,
@@ -883,6 +941,9 @@ function buildLaunchFromExecutor(
     idleSlots: coordinator.idleSlots,
     completedLanes: [],
     noDispatchReason: coordinator.noDispatchReason,
+    dispatchMode: coordinator.dispatchMode,
+    dispatchModeSource: coordinator.dispatchModeSource,
+    schedulerBarrier: coordinator.schedulerBarrier,
     finalSchedule: {
       source: 'executor',
       activeRows: [],
@@ -1267,6 +1328,7 @@ module.exports = {
   listLanes,
   PldToolError,
   reportResult,
+  resolveDispatchMode,
   resolveExecutorDbPath,
   structuredErrorShape,
   suggestRefillFromExecutor,

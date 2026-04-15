@@ -32,10 +32,9 @@ test('route-state integration: import → claim → READY_TO_COMMIT updates exec
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pld-route-state-'));
   try {
     process.env.PLD_PROJECT_ROOT = tmp;
-    const pldRoot = path.join(tmp, 'PLD');
-    const execDir = path.join(pldRoot, 'executions', 'route-state-exec');
+    const execDir = path.join(tmp, 'docs', 'plans', 'route-state-exec');
     fs.mkdirSync(execDir, {recursive: true});
-    fs.writeFileSync(path.join(execDir, 'lane-1.md'), lanePlanFixture, 'utf8');
+    fs.writeFileSync(path.join(execDir, 'run-it-lane-1.md'), lanePlanFixture, 'utf8');
 
     importLegacyExecutionState(tmp);
     const claimed = claimAssignment(tmp, 'route-state-exec', 'Lane 1');
