@@ -4,3 +4,6 @@ export * from "./relativeTime.js";
 export * from "./recommended.js";
 export * from "./config.js";
 export * from "./detectTheme.js";
+export * from "./tmux-instance-constants.js";
+export * from "./tmux-instance-store.js";
+export * from "./tmux-switch-selector.js";

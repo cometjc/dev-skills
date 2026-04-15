@@ -43,10 +43,19 @@ import type { UpdateInfo } from "../update/types.js";
 import { KEYS } from "../tui/constants/keybindings.js";
 import { runConfigCommand } from "../cli/commands/config.js";
 import {
-  getCurrentTmuxWindowId,
+  getCurrentTmuxLocation,
   isRunningInTmux,
-  selectTmuxWindow,
+  selectTmuxLocation,
+  isTmuxLocationReachable,
 } from "../tui/shared/utils/tmux.js";
+import {
+  listReachableTmuxInstances,
+} from "../tui/shared/utils/tmux-instance-store.js";
+import {
+  resolveAuqSwitchTarget,
+  selectLatestReachableLocation,
+} from "../tui/shared/utils/tmux-switch-selector.js";
+import { useTmuxInstanceHeartbeat } from "./hooks/useTmuxInstanceHeartbeat.js";
 import {
   startTelegramClientRuntime,
   stopTelegramClientRuntime,
@@ -182,13 +191,15 @@ function AppInner({ config }: { config: AUQConfig }) {
     dontAskAgain: false,
   });
   const tmuxRuntimeRef = useRef<{
-    auqWindowId: string | null;
-    pendingReturnWindowId: string | null;
+    lastUsedAuqLocation: string | null;
+    pendingReturnLocation: string | null;
     switchedSessionId: string | null;
+    instanceId: string;
   }>({
-    auqWindowId: null,
-    pendingReturnWindowId: null,
+    lastUsedAuqLocation: null,
+    pendingReturnLocation: null,
     switchedSessionId: null,
+    instanceId: `${process.pid}-${Date.now()}`,
   });
 
   // Notification configuration from config
@@ -370,14 +381,21 @@ function AppInner({ config }: { config: AUQConfig }) {
     if (!isRunningInTmux()) return;
     const latest = getConfig();
     if (!latest.tmux.autoSwitch.askOnFirstTmux || latest.tmux.autoSwitch.prompted) return;
-    const auqWindowId = getCurrentTmuxWindowId();
-    tmuxRuntimeRef.current.auqWindowId = auqWindowId;
+    const location = getCurrentTmuxLocation();
+    tmuxRuntimeRef.current.lastUsedAuqLocation = location;
     setTmuxPromptState({
       visible: true,
       focusedIndex: latest.tmux.autoSwitch.enabled ? 0 : 1,
       dontAskAgain: false,
     });
   }, []);
+
+  useTmuxInstanceHeartbeat({
+    enabled: isRunningInTmux(),
+    instanceId: tmuxRuntimeRef.current.instanceId,
+    state: state.mode === "PROCESSING" ? "questioning" : "idle",
+    getLocation: getCurrentTmuxLocation,
+  });
 
   // ── Auto-update checker ─────────────────────────────────────
   useEffect(() => {
@@ -445,23 +463,39 @@ function AppInner({ config }: { config: AUQConfig }) {
     if (!activeSession) return;
     if (tmuxRuntimeRef.current.switchedSessionId === activeSession.sessionId) return;
 
-    const auqWindowId =
-      tmuxRuntimeRef.current.auqWindowId ?? getCurrentTmuxWindowId();
-    tmuxRuntimeRef.current.auqWindowId = auqWindowId;
-    if (!auqWindowId) return;
+    const currentLocation = getCurrentTmuxLocation();
+    if (!currentLocation) return;
 
-    const currentWindowId = getCurrentTmuxWindowId();
-    if (!currentWindowId || currentWindowId === auqWindowId) {
-      tmuxRuntimeRef.current.pendingReturnWindowId = null;
+    const resolveTarget = async (): Promise<string | null> => {
+      const lastUsed = tmuxRuntimeRef.current.lastUsedAuqLocation;
+      const instances = await listReachableTmuxInstances();
+      const reachable = instances
+        .map((x) => x.location)
+        .filter((loc) => isTmuxLocationReachable(loc));
+      const target = resolveAuqSwitchTarget({
+        currentLocation,
+        lastUsedLocation: lastUsed,
+        reachableLocations: reachable,
+      });
+      return target ?? selectLatestReachableLocation(instances);
+    };
+
+    void resolveTarget().then((targetLocation) => {
+      if (!targetLocation) return;
+      if (targetLocation === currentLocation) {
+        tmuxRuntimeRef.current.pendingReturnLocation = null;
+        tmuxRuntimeRef.current.switchedSessionId = activeSession.sessionId;
+        tmuxRuntimeRef.current.lastUsedAuqLocation = targetLocation;
+        return;
+      }
+
+      tmuxRuntimeRef.current.pendingReturnLocation = currentLocation;
       tmuxRuntimeRef.current.switchedSessionId = activeSession.sessionId;
-      return;
-    }
-
-    tmuxRuntimeRef.current.pendingReturnWindowId = currentWindowId;
-    tmuxRuntimeRef.current.switchedSessionId = activeSession.sessionId;
-    if (!selectTmuxWindow(auqWindowId)) {
-      showToast("Tmux 自動切換失敗", "error", "Tmux");
-    }
+      tmuxRuntimeRef.current.lastUsedAuqLocation = targetLocation;
+      if (!selectTmuxLocation(targetLocation)) {
+        showToast("Tmux 自動切換失敗", "error", "Tmux");
+      }
+    });
   }, [activeSessionIndex, sessionQueue, showToast, state.mode]);
 
   useEffect(() => {
@@ -469,14 +503,14 @@ function AppInner({ config }: { config: AUQConfig }) {
     const latest = getConfig();
     if (!latest.tmux.autoSwitch.returnToSource) return;
     if (state.mode !== "WAITING") return;
-    const targetWindow = tmuxRuntimeRef.current.pendingReturnWindowId;
-    const auqWindowId = tmuxRuntimeRef.current.auqWindowId;
-    if (!targetWindow || !auqWindowId) return;
-    const currentWindowId = getCurrentTmuxWindowId();
-    if (currentWindowId === auqWindowId) {
-      void selectTmuxWindow(targetWindow);
+    const targetLocation = tmuxRuntimeRef.current.pendingReturnLocation;
+    const auqLocation = tmuxRuntimeRef.current.lastUsedAuqLocation;
+    if (!targetLocation || !auqLocation) return;
+    const currentLocation = getCurrentTmuxLocation();
+    if (currentLocation === auqLocation) {
+      void selectTmuxLocation(targetLocation);
     }
-    tmuxRuntimeRef.current.pendingReturnWindowId = null;
+    tmuxRuntimeRef.current.pendingReturnLocation = null;
     tmuxRuntimeRef.current.switchedSessionId = null;
   }, [state.mode]);
 
