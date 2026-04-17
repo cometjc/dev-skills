@@ -20,6 +20,7 @@ Route each request to one execution workflow with deterministic guardrails.
 |---|---|
 | Pending AUQ feedback exists | AUQ continuity gate, then re-evaluate |
 | `/do ~N` | Task status listing only (stop) |
+| Design intent is incomplete (spec completeness score < 4/5) | Spec clarification path |
 | `fix-errors` with non-empty todo | `pld` |
 | Explicit single-thread preference | `executing-plans` |
 | Existing plan execution + independent tasks | `pld` |
@@ -35,6 +36,26 @@ Route each request to one execution workflow with deterministic guardrails.
 - During spec clarification path, user-facing questions must go through `ask-me`, not plain chat.
 - Straightforward bugfix path bypasses spec/plan and executes via `systematic-debugging`.
 - Under `/do`, any user confirmation/approval/choice prompt must use AUQ (`ask-me`) tooling.
+
+## Spec Completeness Score
+
+Score each request on 5 required fields (1 point each):
+
+- objective is explicit
+- constraints are explicit
+- acceptance criteria are explicit
+- risk/rollback boundary is explicit
+- verification approach is explicit
+
+Routing rule:
+
+- score `< 4` -> treat as design intent incomplete -> route to spec clarification path
+- score `>= 4` -> continue evaluating lower rows
+
+### Fast examples
+
+- "Add instruction_proposer + metric penalties" with no thresholds/acceptance -> `< 4` -> spec clarification
+- "Change X to Y in file Z; pass test A and B; keep API unchanged" -> `>= 4` candidate
 
 ## Straightforward Bugfix (Narrow Definition)
 
@@ -153,6 +174,7 @@ For low-risk, single-target doc-only `/do` governance edits:
 
 - `/do ~N` lists only task status.
 - pending AUQ feedback triggers AUQ continuity before route selection.
+- design intent incomplete (score < 4/5) routes to spec clarification path before straightforward fix row.
 - straightforward bugfix goes direct to `systematic-debugging`.
 - straightforward route only applies when all narrow-definition checks pass.
 - any user confirmation/approval/choice in `/do` flow uses AUQ (no plain-chat confirmation).
