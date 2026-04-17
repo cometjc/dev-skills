@@ -20,7 +20,6 @@ Route each request to one execution workflow with deterministic guardrails.
 |---|---|
 | Pending AUQ feedback exists | AUQ continuity gate, then re-evaluate |
 | `/do ~N` | Task status listing only (stop) |
-| Design intent is incomplete (spec completeness score < 4/5) | Spec clarification path |
 | `fix-errors` with non-empty todo | `pld` |
 | Explicit single-thread preference | `executing-plans` |
 | Existing plan execution + independent tasks | `pld` |
@@ -36,26 +35,6 @@ Route each request to one execution workflow with deterministic guardrails.
 - During spec clarification path, user-facing questions must go through `ask-me`, not plain chat.
 - Straightforward bugfix path bypasses spec/plan and executes via `systematic-debugging`.
 - Under `/do`, any user confirmation/approval/choice prompt must use AUQ (`ask-me`) tooling.
-
-## Spec Completeness Score
-
-Score each request on 5 required fields (1 point each):
-
-- objective is explicit
-- constraints are explicit
-- acceptance criteria are explicit
-- risk/rollback boundary is explicit
-- verification approach is explicit
-
-Routing rule:
-
-- score `< 4` -> treat as design intent incomplete -> route to spec clarification path
-- score `>= 4` -> continue evaluating lower rows
-
-### Fast examples
-
-- "Add instruction_proposer + metric penalties" with no thresholds/acceptance -> `< 4` -> spec clarification
-- "Change X to Y in file Z; pass test A and B; keep API unchanged" -> `>= 4` candidate
 
 ## Straightforward Bugfix (Narrow Definition)
 
@@ -114,10 +93,11 @@ During PLD execution, do not interrupt per lane. Interrupt only for:
   - before first write and before commit
 - If check fails, subagent reports `BLOCKED` and must not write/commit.
 
-Controller validation after subagent completion:
+Controller validation after subagent completion (see [verification commands](references/verification-commands.md)):
 
 - `git -C <worktree> rev-parse --abbrev-ref HEAD`
 - `git branch --contains <commit_sha>`
+- Reject reviewer handoff if commit appears on unexpected branch.
 
 ## fix-errors Monitor Mode
 
@@ -131,16 +111,27 @@ For plan-based work:
 
 1. Verify implementation.
 2. Run feedback stage (findings or no_findings).
-3. Ensure implementation commits are reachable from base branch.
+3. Ensure implementation commits are reachable from base branch (see [verification commands](references/verification-commands.md)).
 4. Stage only plan-related files.
 5. Delete plan file only after integration gate passes.
 6. Auto-commit with Conventional Commits.
+
+"Plan finish" means implementation commits are reachable from base branch; feature-branch-only commits are `implemented_not_integrated`, not finished.
 
 `defer-integration` exception:
 
 - mark status `implemented_not_integrated`
 - skip cleanup and post-plan auto-commit
 - report integration pending
+
+### Post-cleanup process-improvement prompt (mandatory)
+
+After cleanup completes for a `/do` execution, ask once via AUQ:
+
+> "Do you want to run a `/do` process-improvement pass for this run?"
+
+- **Yes** -> run focused improvement pass on this run's execution history: summarize friction points with evidence, propose 2-4 options (recommended first), confirm selected option(s) before editing `do`/`pld` governance docs.
+- **No** -> end without additional process-rule edits.
 
 ## Governance Doc-only Edits
 
@@ -162,7 +153,6 @@ For low-risk, single-target doc-only `/do` governance edits:
 
 - `/do ~N` lists only task status.
 - pending AUQ feedback triggers AUQ continuity before route selection.
-- design intent incomplete (score < 4/5) routes to spec clarification path before straightforward fix row.
 - straightforward bugfix goes direct to `systematic-debugging`.
 - straightforward route only applies when all narrow-definition checks pass.
 - any user confirmation/approval/choice in `/do` flow uses AUQ (no plain-chat confirmation).
@@ -183,9 +173,14 @@ For low-risk, single-target doc-only `/do` governance edits:
 - feedback stage result
 - base-branch integration evidence for plan cleanup
 
+For PLD-routed runs, also capture the normalized fields in [evidence-record.md](references/evidence-record.md).
+
 ## References
 
 - [Ask Me Skill](../ask-me/SKILL.md)
 - [PLD Skill](../pld/SKILL.md)
 - [PLD canonical contract](../pld/spec/PLD/canonical-contract.md)
+- [PLD command templates](references/pld-commands.md)
+- [Verification commands](references/verification-commands.md)
+- [Evidence record format](references/evidence-record.md)
 - [Worktree Recovery](references/worktree-recovery.md)
