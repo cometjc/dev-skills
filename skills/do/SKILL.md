@@ -5,408 +5,183 @@ description: "Use when requests need governance routing across planning/debuggin
 
 # Do
 
-Route a request to the correct Superpowers workflow and enforce execution guardrails.
+Route each request to one execution workflow with deterministic guardrails.
 
-## Default `/do` invocation (chained skills)
+## Quick Start
 
-Unless a **higher-priority** row in the routing table matches first, treat:
+1. Run AUQ continuity first if unanswered AUQ feedback exists.
+2. Match the first row in the routing table and stop.
+3. Run the selected workflow with required gates only.
+4. Capture minimal evidence before completion.
 
-`/do <request>`
+## Routing Table (First Hit Wins)
 
-as semantically equivalent to:
-
-`/do /brainstorming /grill-me /ask-me <request>`
-
-Meaning: run the **brainstorming** discovery/design flow, then **grill-me** branch-by-branch resolution, and handle **every** user-facing question in those phases through **`ask-me`** (AUQ MCP per `ask-me`), not plain-chat Q&A or ad-hoc multiple choice.
-
-**Does not apply** when an earlier table hit applies (for example: `/do ~N`, `fix-errors` with non-empty todo, explicit single-thread preference, existing plan-execution intent, straightforward bugfix/test-fix, or independent multi-domain `dispatching-parallel-agents`). Those routes keep their existing behavior.
-
-## Dependencies
-
-### Routing and Discovery
-
-- using-superpowers
-- ask-me
-- brainstorming
-- grill-me
-- systematic-debugging
-- dispatching-parallel-agents
-
-### Planning and Execution
-
-- writing-plans
-- pld
-- executing-plans
-- using-git-worktrees
-
-### Verification and Quality Gates
-
-- verification-before-completion
-- test-driven-development
-- requesting-code-review
-- receiving-code-review
-- finishing-a-development-branch
-- writing-skills
-
-## Numbered Workflow (Fast-Reference)
-
-Use this indexed flow for routing, fast-forward, and progress references (for example: "jump to (8)" or "resume at (12.b)").
-
-### A. Entry and Routing
-
-Apply the first matching route and stop.
-
-#### Routing Decision Table
-
-| Condition | Hit | Next |
-|---|---|---|
-| Pending AUQ feedback exists | (1) | Run AUQ continuity gate before any route |
-| `/do ~N` | (3.a) | Task status listing only; stop |
-| `fix-errors` and todo non-empty | (3.b) | `pld` |
-| Explicit single-thread preference | (3.c) | `executing-plans` |
-| Existing plan-execution intent with independent tasks | (3.d) | `pld` |
-| Existing plan-execution intent with sequential/tightly coupled tasks | (3.d) | `executing-plans` |
-| New feature or non-obvious bugfix | (3.e) | Spec clarification path (B) |
-| Straightforward bugfix/test-fix | (3.f) | `systematic-debugging` direct |
-| Multi-domain independent subproblems (>=2) | (3.g) | `dispatching-parallel-agents` |
-| Unclear scope/new behavior fallback | (3.h) | Spec clarification path (B) |
-
-**(1) AUQ continuity gate first**
-- If pending user feedback exists (open AUQ session or unresolved feedback state), call `get_answered_questions` before any execution route.
-- Plain-chat follow-up is forbidden while feedback state is unresolved.
-
-**(2) Preflight**
-- Check whether requested work is already applied.
-- If `already_applied`, report evidence and skip execution.
-
-**(3) Route selection (deterministic)**
-- **(3.a)** `/do ~N` -> Task Status Listing only.
-- **(3.b)** `fix-errors` with non-empty todo -> `pld` (direct, no notify).
-- **(3.c)** Explicit single-thread preference -> `executing-plans`.
-- **(3.d)** Existing plan-execution intent:
-  - active subagents -> continue `pld`
-  - otherwise evaluate independence:
-    - independent tasks -> `pld` (notify + start)
-    - strongly sequential -> `executing-plans`
-- **(3.e)** New feature or non-obvious bugfix -> `brainstorming` + `grill-me` + `ask-me` (path B) before `writing-plans`.
-- **(3.f)** Straightforward bugfix/test-fix -> `systematic-debugging` direct execution.
-- **(3.g)** Independent multi-domain subproblems (>=2, truly independent) -> `dispatching-parallel-agents`.
-- **(3.h)** Fallback unclear scope/new behavior -> same as (3.e): `brainstorming` + `grill-me` + `ask-me` (path B) before `writing-plans`.
-
-### B. Spec Clarification Path (for routes 3.e and 3.h)
-
-**(4) Brainstorming phase**
-- Run full `brainstorming` gate: design -> spec write -> spec review loop -> user review.
-- Under `/do`, **do not** substitute plain-chat or inline multiple-choice for user input: any elicitation that would be a user question must go through **`ask-me`** (AUQ), following `ask-me` question schema and templates.
-
-**(5) Grill-me phase**
-- Use `grill-me` to resolve decision branches and dependencies one-by-one.
-- Each grill-me question to the user is an **`ask-me`** (AUQ) turn, not plain chat (same hard rule as (4)).
-
-**(6) AUQ decision gate during spec**
-- Unresolved key design decisions must use AUQ (`ask-me`), not plain chat.
-- For multiple viable approaches (A/B/C), final selection must be asked via AUQ.
-- This includes **single-question strategy clarifications** during planning (for example target tmux-session selection); do not ask them in plain chat.
-- This applies throughout path B, including phases (4) and (5); plain-chat substitution remains forbidden.
-
-**(7) Spec handoff quality gate**
-- Do not send path-only prompts.
-- Must include:
-  - newly specified items since Q&A
-  - impact if changed now
-  - spec path as supporting reference
-
-### C. Plan Writing Path
-
-**(8) Write plan**
-- Use `writing-plans` after spec approval.
-
-**(9) AUQ execution-choice gate**
-- If plan is complete and execution mode is undecided (`PLD` vs `Inline`), ask via AUQ.
-- Do not ask this choice in plain chat.
-
-### D. Execution Path
-
-**(10) Executor selection**
-- `systematic-debugging` route executes directly (no spec/plan generation).
-- Plan-execution routes:
-  - independent tasks -> `pld`
-  - tightly coupled/sequential -> `executing-plans`
-  - explicit single-thread preference always overrides to `executing-plans`
-- `pld` start message:
-  - _"Proceeding with pld execution. Stop me now if you need single-thread execution (executing-plans) to follow the details directly."_
-
-**(10.a) PLD dispatch mode contract (`auto` / `streaming` / `wave`)**
-- When route (3.b) or (3.d independent) selects `pld`, set `dispatch_mode` before first launch:
-  - `auto` (default): detect executor/agent capability and choose `streaming` when safe, else `wave`.
-  - `streaming`: asynchronous lane progression; refill immediately when a slot frees.
-  - `wave`: batch-only progression; dispatch one wave, wait for all in-wave results, then schedule next wave.
-- If capability is mixed, allow per-lane mixed execution in one run:
-  - async-capable lanes keep `streaming`
-  - barrier-constrained lanes stay `wave`
-  - coordinator keeps one executor state surface (no split truth).
-- Do not ask the user to choose dispatch mode unless a high-cost trade-off is unresolved; otherwise default to `auto`.
-
-**(10.b) Quiet-autopilot (reduced user interruption)**
-- During PLD execution, continue dispatch/review/refill without per-lane confirmation prompts.
-- User-facing interruption is allowed only for:
-  - AUQ high-cost decision gates
-  - lane escalation event emitted by PLD governance
-  - all lanes blocked / no safe dispatchable work
-  - irreversible integration action requiring explicit confirmation by policy.
-- For normal progress, emit concise progress snapshots instead of questions.
-
-**(11) Worktree policy**
-- Require `using-git-worktrees` before concurrent execution routes (`pld`, `dispatching-parallel-agents`).
-- Single-thread `executing-plans` may skip worktree only when risk is low.
-- Follow [Worktree Recovery](references/worktree-recovery.md) when needed.
-
-**(12) Subagent git-context hard gate (when branch/worktree assigned)**
-- **(12.a)** Before first write and before commit, each subagent MUST run:
-  - `scripts/ensure_git_context.sh --branch <expected_branch> --toplevel <expected_worktree_root>`
-- **(12.b)** If check fails, subagent MUST stop and report `BLOCKED` (no writes/commit allowed).
-- **(12.c)** Controller MUST verify after subagent completion:
-  - `git -C <worktree> rev-parse --abbrev-ref HEAD`
-  - `git branch --contains <commit_sha>`
-  - Reject reviewer handoff if commit appears on unexpected branch.
-
-**(13) fix-errors monitor mode**
-- In `fix-errors`, new todo items trigger ordered background dispatch.
-- Do not pause unless explicit blocking condition is hit.
-
-### D1. PLD command templates (operational)
-
-Use these templates when route (3.b) or (3.d independent) selects `pld`.
-
-**Canonical vocabulary:** executor `report-result` statuses, lane phases, and review-gate ordering are defined only in `skills/pld/spec/PLD/canonical-contract.md` (not duplicated here). If this skill and the contract disagree, follow the contract and update this routing doc.
-
-Set `PLD_TOOL_CMD` to the project-valid command first.
-
-- bundled skill example: `PLD_TOOL_CMD="node skills/pld/scripts/pld-tool.cjs"`
-- external PLD repo example: `PLD_TOOL_CMD="node /home/jethro/repo/agent/parallel-lane-dev-plugin/scripts/pld-tool.cjs"`
-
-**Coordinator bootstrap (repo root)**
-- `$PLD_TOOL_CMD --role coordinator import-plans --json`
-- `$PLD_TOOL_CMD --role coordinator audit --json`
-- `$PLD_TOOL_CMD --role coordinator go --json`
-
-**Coder lane cycle (per lane item)**
-- `$PLD_TOOL_CMD --role worker claim-assignment --execution <id> --lane "<Lane N>" --json`
-- implement + verify in assigned worktree
-- `$PLD_TOOL_CMD --role worker report-result --execution <id> --lane "<Lane N>" --status <status> --result-branch <branch> --verification-summary "<short summary>" --json`
-- If the environment still emits `--role coder`, treat `E_ROLE_ALIAS_REJECTED` as an auto-recoverable tooling mismatch and retry once with `--role worker` before escalating.
-
-**Reviewer gate cycle (fresh reviewer subagent each gate)**
-- For each review gate (spec compliance, then code quality), run `$PLD_TOOL_CMD --role reviewer report-result ...` using the **reviewer `--status` tokens** named in `skills/pld/spec/PLD/canonical-contract.md` (and accepted by this repo’s `pld-tool` build). Put the human-readable PASS/FAIL rationale in `--verification-summary` / payload fields as required by your lane prompt — do **not** treat narrative “pass/fail” wording as a second canonical status system.
-- on fail: coder fixes and reports; then spawn a new reviewer for re-review.
-
-**Batch synchronization cadence**
-- `streaming` mode: run `audit --json` at macro checkpoints and after each refill burst (not every single lane event).
-- `wave` mode: run one `audit --json` at the end of each full wave and before launching the next wave.
-- avoid tight polling loops; use scheduler snapshots for orchestration decisions.
-
-**Escalation trigger**
-- if PLD emits a lane escalation event (per `skills/pld/spec/PLD/canonical-contract.md` policy), raise AUQ escalation and mark affected slices blocked until recovery decision arrives.
-
-### E. Verification, Feedback, and Completion
-
-**(14) Feedback stage**
-- Run when verification reports failure, ambiguity, or policy drift.
-- Report gaps by severity with file/line evidence.
-- Create remediation plan only when findings require follow-up work.
-- If the user has requested process/governance flow changes, propose `/do` flow-improvement options in this review phase and get explicit user confirmation before applying those process-rule edits.
-- Flow-improvement proposals in review must be option-based (recommended option first + alternatives), not a single forced proposal.
-
-**(15) Post-plan completion**
-- For each completed plan: verify -> feedback stage -> integration-to-base-branch gate -> stage only plan-related files -> delete plan file -> auto-commit (Conventional Commit).
-- Exclude unrelated files and emit one-line hint per excluded file.
-- Resolve base branch by auto-detecting `origin/HEAD` (fallback: repository default branch policy).
-- Plan cleanup is forbidden before implementation commits are integrated into base branch (merge or cherry-pick), unless explicit `defer-integration` is set.
-- `defer-integration` exception branch:
-  - mark plan status as `implemented_not_integrated`
-  - keep plan file (no cleanup)
-  - do not run post-plan auto-commit/cleanup
-  - report integration remains pending
-- "Plan finish" means implementation commits are reachable from base branch; feature-branch-only commits are `implemented_not_integrated`, not finished.
-- Required evidence before cleanup:
-  - detected base branch name
-  - implementation commit SHA(s) are reachable from base branch (`git branch --contains <sha>` includes base branch)
-  - post-integration verification passes on base branch
-
-**(15.a) Post-cleanup process-improvement prompt (mandatory)**
-- After cleanup completes for a `/do` execution, ask once:
-  - _"Do you want to run a `/do` process-improvement pass for this run?"_
-- If user says **yes**, run a focused improvement pass based on this run's execution history:
-  - summarize friction points with evidence
-  - propose 2-4 options (recommended first)
-  - confirm selected option(s) before editing `do`/`pld` governance docs
-- If user says **no**, end without additional process-rule edits.
-
-**(16) Governance doc-only edits**
-- For direct `$do` edits that are single-target, doc-only, low-risk:
-  - auto-commit after verification
-  - stage only required files.
-- When the request includes edits in an external repo (outside the current workspace repo), finish by creating commits in each affected external repo after verification.
-
-## AUQ Operational Rules (`ask-me`)
-
-`do` decides **when** to invoke AUQ. `ask-me` defines **how** to ask.
-
-`do` keeps only AUQ trigger conditions and hard gates. Question wording, options, batching, and templates are fully delegated to `ask-me`.
-
-For the default `/do` chained stack (`brainstorming` + `grill-me`), treat **all** user prompts that would otherwise appear as chat questions as **`ask-me`** invocations (see Default `/do` invocation above).
-
-- Trigger AUQ when a key decision is not finalized and cannot be derived from context.
-- Mandatory AUQ gate before execution when unresolved decision carries high-cost side effects.
-- Hard gate: pending feedback must be resolved through AUQ tooling before route execution.
-- During `pld` execution, high-cost decisions should default to non-blocking AUQ and continue independent lanes; restore blocked slices when answers arrive.
-- Even when only one clarification question is needed, use AUQ tooling instead of plain chat.
-- Plan-complete execution-choice gate must use AUQ tooling (not plain chat).
-- Governance/rule/process doc updates must use `ask-me` ordering contract.
-
-## Planning Trigger Policy
-
-- Planning is required for new features or non-obvious bugfixes with meaningful trade-offs.
-- Straightforward fixes bypass spec/plan and go directly through `systematic-debugging`.
-- Plan-execution intent is valid only if at least one is true:
-  - user explicitly references plan/spec/todo artifact or asks to continue an existing plan
-  - active subagents already belong to an existing plan execution
-  - execution context already has unresolved selected plan artifact
-- If not explicit, do not auto-promote to route (3.d).
-
-## Task Status Listing (`~N`)
-
-When invoked as `/do ~N` (for example, `/do ~5`), list the most recent N tasks. Default N = 10.
-
-Use tasks performed in the current session as the source of truth; sort by `updated_at` descending; take top N. `in_progress` tasks from a previous session display as `interrupted`.
-
-Output: compact table `N | title | status | updated_at`. Stop; do not route to execution.
-
-| Session status | Display label |
+| Condition | Route |
 |---|---|
-| `in_progress` | ongoing (or `interrupted` if from prior session) |
-| `completed` | done |
-| `cancelled` | cancelled |
-| `pending` | pending |
+| Pending AUQ feedback exists | AUQ continuity gate, then re-evaluate |
+| `/do ~N` | Task status listing only (stop) |
+| Design intent is incomplete (spec completeness score < 4/5) | Spec clarification path |
+| `fix-errors` with non-empty todo | `pld` |
+| Explicit single-thread preference | `executing-plans` |
+| Existing plan execution + independent tasks | `pld` |
+| Existing plan execution + sequential/tightly-coupled tasks | `executing-plans` |
+| Straightforward bugfix/test-fix | `systematic-debugging` |
+| Multi-domain independent subproblems (`>=2`) | `dispatching-parallel-agents` |
+| New feature / non-obvious bugfix / unclear scope | Spec clarification path |
 
-## Validation Matrix (Minimum)
+## Route Semantics
 
-Validate routing behavior with these checks:
-- (3.a) `/do ~N` -> lists session-task status only
-- (1) pending user feedback -> AUQ continuity gate runs before route selection/execution
-- (3.f) straightforward bugfix/test-fix -> `systematic-debugging` direct execution
-- (3.e) non-obvious feature/bugfix -> path B: `brainstorming` + `grill-me` + `ask-me` first
-- (3.h) unclear fallback -> same path B stack as (3.e)
-- default `/do` (no higher-priority hit) -> path B user questions only via `ask-me` (no plain-chat substitution)
-- (3.c) explicit single-thread request -> `executing-plans`
-- (3.b) `fix-errors` with non-empty todo -> direct `pld`
-- (3.d) existing plan-execution intent + independent tasks -> `pld`
-- (3.d) existing plan-execution intent + sequential tasks -> `executing-plans`
-- routing decision table row coverage -> each active request path maps to exactly one first-hit rule
-- (12.a) subagent on worktree branch -> `ensure_git_context.sh` passes before first write and before commit
-- (12.b) subagent context mismatch -> task reports `BLOCKED` and does not write/commit
-- (7) brainstorming user-review handoff -> includes "newly specified items since Q&A" summary, not path-only prompt
-- AUQ governance flow -> follows `ask-me` question-order contract and templates
-- AUQ trigger -> unresolved key decision (not finalized) is queried before execution
-- mandatory AUQ gate -> unresolved high-cost key decision blocks execution until explicit AUQ answer
-- AUQ pending-feedback gate -> unresolved feedback state is polled/handled via AUQ before execution
-- (9) plan-complete execution choice -> `PLD` vs `Inline Execution` is asked via AUQ (no plain chat choice prompt)
-- (6) path B (3.e, 3.h) key decisions -> AUQ tool used (no plain-chat substitution)
-- (6) path B approach choice -> A/B/C recommendation selected via AUQ
-- `pld` non-blocking AUQ -> pending answer blocks only affected slices while independent lanes keep running
-- `pld` escalation policy -> lane escalation event is raised per canonical contract policy and handled via AUQ gate
-- `pld` dispatch mode `auto` -> selects `streaming` when async capability exists, else `wave`
-- mixed-capability execution -> async lanes keep progressing while wave-constrained lanes wait at barrier
-- quiet-autopilot -> no per-lane confirmation prompts during normal progression
-- review-stage flow improvement -> when requested by user, `/do` process-improvement options are presented during feedback/review and require explicit confirmation
-- (15) base-branch detection -> base branch auto-detected from `origin/HEAD` or repository policy fallback
-- (15) post-plan cleanup gate -> cleanup is blocked when commits are not yet on base branch
-- (15.a) post-cleanup prompt -> `/do` asks once whether to run process-improvement pass
-- (15) defer-integration exception -> status set to `implemented_not_integrated` and cleanup skipped
-- (15) plan finish definition -> feature-branch-only implementation is reported as `implemented_not_integrated`
+- `/do <request>` default chain is `brainstorming` -> `grill-me` -> `ask-me`.
+- Any higher-priority table hit overrides the default chain.
+- During spec clarification path, user-facing questions must go through `ask-me`, not plain chat.
+- Straightforward bugfix path bypasses spec/plan and executes via `systematic-debugging`.
+- Under `/do`, any user confirmation/approval/choice prompt must use AUQ (`ask-me`) tooling.
 
-### Validation Scenarios (PLD-focused)
+## Spec Completeness Score
 
-Use these concrete scenarios to validate route, AUQ continuity, and PLD recovery behavior.
+Score each request on 5 required fields (1 point each):
 
-1. **fix-errors -> PLD route**
-   - Input: `/do fix-errors` with non-empty todo queue.
-   - Expected: first-hit (3.b), executor = `pld`.
-   - Evidence: route match note + `audit --json` snapshot before first dispatch.
+- objective is explicit
+- constraints are explicit
+- acceptance criteria are explicit
+- risk/rollback boundary is explicit
+- verification approach is explicit
 
-2. **independent plan intent -> PLD route**
-   - Input: explicit continue-plan intent with independent tasks.
-   - Expected: first-hit (3.d independent), executor = `pld`.
-   - Evidence: independence rationale + coordinator `go --json` output.
+Routing rule:
 
-3. **sequential plan intent -> executing-plans**
-   - Input: continue-plan intent with tightly coupled sequence.
-   - Expected: first-hit (3.d sequential), executor = `executing-plans`.
-   - Evidence: dependency rationale captured in route decision note.
+- score `< 4` -> treat as design intent incomplete -> route to spec clarification path
+- score `>= 4` -> continue evaluating lower rows
 
-4. **non-blocking AUQ in PLD loop**
-   - Trigger: high-cost decision appears during active PLD cycle.
-   - Expected: AUQ opened in non-blocking mode; only impacted slices blocked.
-   - Evidence:
-     - AUQ session id
-     - blocked slice ids
-     - proof at least one independent lane progressed while AUQ pending
+### Fast examples
 
-5. **AUQ answered -> blocked slice restore**
-   - Input: prior pending AUQ becomes answered.
-   - Expected: `get_answered_questions` consumed before next route action; blocked slices reattached.
-   - Evidence: answered payload summary + resumed lane ids + next `audit --json` delta.
+- "Add instruction_proposer + metric penalties" with no thresholds/acceptance -> `< 4` -> spec clarification
+- "Change X to Y in file Z; pass test A and B; keep API unchanged" -> `>= 4` candidate
 
-6. **lane escalation event handling**
-   - Trigger: PLD emits lane escalation event (per `skills/pld/spec/PLD/canonical-contract.md` policy).
-   - Expected: AUQ decision gate is raised and affected slices are blocked until resolution.
-   - Evidence:
-     - escalation event payload
-     - escalation AUQ session id
-     - post-decision action note (re-scope, pause, or recover path)
+## Straightforward Bugfix (Narrow Definition)
 
-## Execution Evidence Checklist
+A request is "straightforward bugfix/test-fix" only when **all** are true:
 
-For each execution, capture route-aware evidence:
-- selected route and why it matched first
-- preflight result (`already_applied` or `action_required`) with command evidence
-- executor used (`systematic-debugging`, `pld`, or `executing-plans`)
-- AUQ usage and transitions (if any)
-- verification commands and outcomes
-- feedback stage result (`findings` or `no_findings`) and output path when applicable
-- post-plan integration evidence (if cleanup requested): base branch detection, commit reachability from base branch, and verification on base branch
-- defer-integration evidence (if used): explicit marker, pending-integration note, and skipped-cleanup rationale
+- scope is single file/function or tightly local
+- failure signal is explicit and reproducible
+- no strategy trade-off (single obvious fix path)
+- no new behavior/governance/routing policy changes
+- no cross-module side effects expected
 
-### Evidence Record Format (PLD additions)
+If any item is false, do **not** use straightforward route; continue table matching (typically spec clarification).
 
-For PLD-routed runs, add these normalized fields to execution notes:
+## Spec Clarification Path
 
-- `pld_route_hit`: `3.b` or `3.d.independent`
-- `auq_mode`: `blocking` or `non_blocking`
-- `auq_session_id`: `<id>` when AUQ is used
-- `blocked_slices`: `[slice_id...]` (empty when none)
-- `lane_escalation_event`: `{ "execution": "<id>", "lane": "<lane>", "reason": "<reason>" }|none`
-- `resume_event`: `answered|pending|timeout|none`
-- `dispatch_mode`: `auto|streaming|wave`
-- `scheduler_barrier`: `none|wave_waiting|mixed`
-- `user_interrupt_reason`: `auq_gate|escalation|all_blocked|irreversible_action|none`
-- `process_improvement_requested`: `yes|no`
-- `process_improvement_option_selected`: `<option_id>|none`
+Use this path for new behavior, non-obvious bugfixes, and unclear scope.
 
-## Minimal Verification Commands
+1. `brainstorming`: design, spec write, review loop, user review.
+2. `grill-me`: resolve key branches one-by-one.
+3. `ask-me` hard gate:
+   - unresolved key decision -> AUQ required
+   - approach selection (A/B/C) -> AUQ required
+   - high-cost decision before execution -> AUQ required
+   - any user confirmation/approval prompt -> AUQ required
+4. `writing-plans` only after spec approval.
 
-Use these minimum commands when validating routing and post-plan gates:
+## Plan and Execution Selection
 
-- Detect base branch:
-  - `git symbolic-ref --short refs/remotes/origin/HEAD | sed 's@^origin/@@'`
-- Verify current branch:
-  - `git rev-parse --abbrev-ref HEAD`
-- Verify commit reachability from base branch:
-  - `git branch --contains <commit_sha>`
-- Verify pending workspace state before cleanup/commit:
-  - `git status --short`
-- Verify first-hit routing evidence (when needed):
-  - capture request condition, matched row in routing decision table, and selected route in execution notes
+- Plan complete but execution mode undecided (`PLD` vs `Inline`) -> ask via AUQ.
+- Choose executor:
+  - independent tasks -> `pld`
+  - tightly coupled tasks -> `executing-plans`
+  - explicit single-thread request always overrides to `executing-plans`
+
+### PLD Dispatch Mode
+
+- `auto` (default): choose `streaming` when async refill is safe, else `wave`.
+- `streaming`: refill when slots free.
+- `wave`: wait for wave barrier, then dispatch next wave.
+- Mixed capability is allowed per lane; keep one canonical coordinator state.
+
+### Quiet Autopilot
+
+During PLD execution, do not interrupt per lane. Interrupt only for:
+
+- AUQ high-cost decision gates
+- lane escalation events
+- all lanes blocked
+- irreversible integration actions requiring confirmation
+
+## Worktree and Git Context Gates
+
+- Require `using-git-worktrees` before concurrent routes (`pld`, `dispatching-parallel-agents`).
+- Subagents with assigned branch/worktree must run:
+  - `scripts/ensure_git_context.sh --branch <expected_branch> --toplevel <expected_worktree_root>`
+  - before first write and before commit
+- If check fails, subagent reports `BLOCKED` and must not write/commit.
+
+Controller validation after subagent completion:
+
+- `git -C <worktree> rev-parse --abbrev-ref HEAD`
+- `git branch --contains <commit_sha>`
+
+## fix-errors Monitor Mode
+
+- For `/do fix-errors` with non-empty todo, route directly to `pld`.
+- New todo items dispatch in order.
+- Pause only on explicit blocking conditions.
+
+## Completion Gates
+
+For plan-based work:
+
+1. Verify implementation.
+2. Run feedback stage (findings or no_findings).
+3. Ensure implementation commits are reachable from base branch.
+4. Stage only plan-related files.
+5. Delete plan file only after integration gate passes.
+6. Auto-commit with Conventional Commits.
+
+`defer-integration` exception:
+
+- mark status `implemented_not_integrated`
+- skip cleanup and post-plan auto-commit
+- report integration pending
+
+## Governance Doc-only Edits
+
+For low-risk, single-target doc-only `/do` governance edits:
+
+- verify first
+- stage only required files
+- auto-commit
+
+## AUQ Hard Rules
+
+- AUQ continuity must run before any route when pending feedback exists.
+- If one clarification is needed, still use AUQ tooling.
+- Do not replace AUQ with plain chat in governed decision points.
+- Do not use plain chat for any user confirmation/approval/choice under `/do`.
+- During PLD, non-blocking AUQ should block only affected slices while independent lanes continue.
+
+## Minimal Validation Matrix
+
+- `/do ~N` lists only task status.
+- pending AUQ feedback triggers AUQ continuity before route selection.
+- design intent incomplete (score < 4/5) routes to spec clarification path before straightforward fix row.
+- straightforward bugfix goes direct to `systematic-debugging`.
+- straightforward route only applies when all narrow-definition checks pass.
+- any user confirmation/approval/choice in `/do` flow uses AUQ (no plain-chat confirmation).
+- new feature / non-obvious bugfix follows spec clarification path.
+- explicit single-thread request routes to `executing-plans`.
+- `fix-errors` with non-empty todo routes to `pld`.
+- plan intent + independent tasks routes to `pld`; sequential routes to `executing-plans`.
+- subagent git-context mismatch reports `BLOCKED` and prevents writes.
+- plan completion cleanup is blocked when commits are not on base branch.
+
+## Minimal Evidence Checklist
+
+- first-hit route and why
+- preflight result (`already_applied` or `action_required`)
+- executor used
+- AUQ session transitions (if any)
+- verification command outcomes
+- feedback stage result
+- base-branch integration evidence for plan cleanup
 
 ## References
 
