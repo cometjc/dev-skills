@@ -92,6 +92,13 @@ Default role is worker; coordinator must be explicit.
 - Never run tight polling loops; batch around macro checkpoints with `audit --json`.
 - Never dispatch overlapping write sets to parallel workers.
 
+## Idempotency and Audit
+
+- Every PLD mutation must be idempotent: re-running the same `claim-assignment` / `report-result` with the same payload produces the same SQLite state, not a duplicate row or conflicting transition.
+- Every lane dispatch has an audit trail: `audit --json` snapshots before and after each macro checkpoint are the primary replay/forensic evidence.
+- Naming, mapping, and write-set assignment policies must be stated, justified, and verifiable via a repeat `audit --json` (no hidden local state).
+- Branching and merging must be replay-safe: a re-applied merge yields identical tree state.
+
 ## Minimal Evidence Checklist
 
 - why PLD route was selected

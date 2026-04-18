@@ -20,6 +20,7 @@ Route each request to one execution workflow with deterministic guardrails.
 |---|---|
 | Pending AUQ feedback exists | AUQ continuity gate, then re-evaluate |
 | `/do ~N` | Task status listing only (stop) |
+| Error / build-failure diagnostic request | Diagnostic analysis path (no spec clarification) |
 | Design intent is incomplete (spec completeness score < 4/5) | Spec clarification path |
 | `fix-errors` with non-empty todo | `pld` |
 | Explicit single-thread preference | `executing-plans` |
@@ -56,6 +57,17 @@ Routing rule:
 
 - "Add instruction_proposer + metric penalties" with no thresholds/acceptance -> `< 4` -> spec clarification
 - "Change X to Y in file Z; pass test A and B; keep API unchanged" -> `>= 4` candidate
+
+## Diagnostic Analysis Path
+
+Use when the request is an error report, build/test failure, or ask to explain observed system behavior from logs or metrics — not a request to design new behavior.
+
+1. Identify the failure signal (command, log excerpt, error class) and restate it in one line.
+2. Give the typical cause + the standard resolution path.
+3. Provide the minimum verification command to confirm the fix.
+4. Follow up only if the error context is genuinely ambiguous; never default to `ask-me` for mechanical diagnostics.
+
+Evidence required: diagnostic route hit, error class identified, remediation path stated, verification command given.
 
 ## Straightforward Bugfix (Narrow Definition)
 
@@ -174,6 +186,7 @@ For low-risk, single-target doc-only `/do` governance edits:
 
 - `/do ~N` lists only task status.
 - pending AUQ feedback triggers AUQ continuity before route selection.
+- error / build-failure diagnostic request routes to diagnostic-analysis path (not spec clarification).
 - design intent incomplete (score < 4/5) routes to spec clarification path before straightforward fix row.
 - straightforward bugfix goes direct to `systematic-debugging`.
 - straightforward route only applies when all narrow-definition checks pass.
