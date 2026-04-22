@@ -118,6 +118,7 @@ Use these templates as defaults and only customize labels/descriptions to the ta
 - Recommended option must be first and labeled `(Recommended)`.
 - Never add a manual `Other` option.
 - Use AUQ return payload fields as the only authority for state transitions.
+- After the user selects an option, use immediate-action wording in updates (e.g., "我現在就直接..."), not deferred phrasing like "我下一步就...".
 
 ## Do Integration
 
