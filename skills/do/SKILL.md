@@ -122,6 +122,8 @@ During PLD execution, do not interrupt per lane. Interrupt only for:
 
 - Require `using-git-worktrees` before any repository-writing implementation route that should be isolated, including `pld`, `dispatching-parallel-agents`, `executing-plans`, and `systematic-debugging` when it will edit files.
 - Require `finishing-a-development-branch` after implementation is complete and tests pass, before the final integration/cleanup choice is presented or executed.
+- After any git repository write in a `/do` workflow, create a commit before handoff.
+- If the new change is a fixup of the immediately preceding commit and belongs to the same logical change, use `git commit --amend` instead of creating a separate commit.
 - Subagents with assigned branch/worktree must run:
   - `scripts/ensure_git_context.sh --branch <expected_branch> --toplevel <expected_worktree_root>`
   - before first write and before commit
