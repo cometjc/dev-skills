@@ -12,6 +12,13 @@ import {
 
 const askUserQuestionsCore = createAskUserQuestionsCore();
 const runtimeConfig = getConfig();
+const UUID_REGEX =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
+
+function extractSessionId(text: string): string | undefined {
+  const match = text.match(UUID_REGEX);
+  return match?.[0];
+}
 
 // Track active requests with their AbortControllers for disconnect handling
 const activeRequests = new Map<string, { controller: AbortController; sessionId?: string }>();
@@ -42,6 +49,7 @@ server.addTool({
         error: (...args: unknown[]) => void;
       };
     };
+    const callId = randomUUID();
 
     try {
       // Initialize session manager if not already done
@@ -64,9 +72,6 @@ server.addTool({
         throw new Error("At least one question is required");
       }
 
-      // Generate a per-tool-call ID and persist it with the session
-      const callId = randomUUID();
-
       // Create AbortController for this request to handle disconnects
       const controller = new AbortController();
       activeRequests.set(callId, { controller });
@@ -85,6 +90,10 @@ server.addTool({
             callId,
             workingDirectory,
           );
+          const entry = activeRequests.get(callId);
+          if (entry) {
+            entry.sessionId = sessionId;
+          }
           await dispatchSessionToTelegram(
             args.questions.map((q) => ({
               options: q.options.map((o) => ({ label: o.label, description: o.description })),
@@ -97,7 +106,8 @@ server.addTool({
           ).catch(() => {});
           const shortId = sessionId.slice(0, 8);
           const responseText =
-            `[Session: ${shortId} | Questions: ${questionCount} | Status: pending]\n\n` +
+            `[Session: ${shortId} | Questions: ${questionCount} | Status: pending]\n` +
+            `session_id: ${sessionId}\n\n` +
             `Questions submitted successfully.\n` +
             `Use get_answered_questions(session_id="${shortId}") or \`auq fetch-answers ${shortId}\` to retrieve answers.`;
           return {
@@ -124,7 +134,7 @@ server.addTool({
         const shortId = sessionId.slice(0, 8);
         const count = args.questions.length;
         const header = `[Session: ${shortId} | Questions: ${count}]`;
-        const responseWithHeader = `${header}\n\n${formattedResponse}`;
+        const responseWithHeader = `${header}\nsession_id: ${sessionId}\n\n${formattedResponse}`;
 
         // Return formatted response to AI model
         return {
@@ -139,10 +149,14 @@ server.addTool({
         // Handle abort (AI client disconnected)
         if (error instanceof Error && error.message === "ABORTED") {
           log.warn("Session aborted: AI client disconnected", { callId });
+          const knownSessionId = activeRequests.get(callId)?.sessionId;
+          const text = knownSessionId
+            ? `Session aborted: AI client disconnected\nsession_id: ${knownSessionId}`
+            : "Session aborted: AI client disconnected";
           return {
             content: [
               {
-                text: "Session aborted: AI client disconnected",
+                text,
                 type: "text",
               },
             ],
@@ -154,10 +168,15 @@ server.addTool({
       }
     } catch (error) {
       log.error("Session failed", { error: String(error) });
+      const message = String(error);
+      const knownSessionId = extractSessionId(message) ?? activeRequests.get(callId)?.sessionId;
+      const text = knownSessionId
+        ? `Error in session: ${message}\nsession_id: ${knownSessionId}`
+        : `Error in session: ${message}`;
       return {
         content: [
           {
-            text: `Error in session: ${error}`,
+            text,
             type: "text",
           },
         ],

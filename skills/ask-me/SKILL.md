@@ -28,7 +28,7 @@ Common triggers:
 
 ## Core Contract
 
-1. Default to blocking AUQ when the next step is on the critical path and no independent slice can continue.
+1. Default to `nonBlocking: false` for the first AUQ call on each unresolved decision.
 2. For the same unresolved decision/question, the **first AUQ call MUST be** `nonBlocking: false`.
 3. If a blocking AUQ call times out, keep the existing `session_id` and resume via `get_answered_questions`; do not re-ask the same question as a new non-blocking AUQ call.
 4. Persist session IDs and blocked slices for resumable execution.
@@ -36,16 +36,27 @@ Common triggers:
 6. Resume blocked slices when answers are available.
 7. Treat MCP tool descriptions and return payloads as runtime source of truth.
 
+## nonBlocking Decision Tree
+
+1. Is this the first AUQ for this unresolved decision?
+   - Yes: use `nonBlocking: false`.
+2. Did the blocking call timeout?
+   - Yes: keep the same `session_id` and resume via `get_answered_questions` (do not re-ask as a new AUQ).
+3. Only use `nonBlocking: true` when both are true:
+   - the decision can be deferred, and
+   - independent slices can continue without the answer.
+4. For final "Next Action" closeout questions, use `nonBlocking: false`.
+
 ## AUQ Question Rules
 
 - Ask via MCP tools: `ask_user_questions` and `get_answered_questions`.
 - Always provide 1-5 questions.
 - For governance/doc-rule update requests, the **first AUQ question** must ask for selectable target path(s) before asking content details.
-- Target-path question must provide 2-5 concrete path options (recommended option first), then continue with follow-up AUQ on rule content.
+- Target-path question must provide at least 2 concrete path options (recommended option first), then continue with follow-up AUQ on rule content.
 - Each question must include:
   - `title` (max 12 chars)
   - `prompt` (full question text ending with `?`, supports Markdown formatting)
-  - `options` (2-5 choices, no manual `Other`)
+  - `options` (2+ choices, no manual `Other`)
   - `multiSelect` (`true`/`false`)
 - Put the recommended option first and append `(Recommended)` in the label.
 - Do not ask meta-process confirmations like "Is my plan ready?" or "Should I proceed?".
