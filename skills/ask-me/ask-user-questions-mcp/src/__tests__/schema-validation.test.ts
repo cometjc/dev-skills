@@ -193,6 +193,19 @@ describe("Schema Validation - Edge Cases", () => {
       expect(parsed.multiSelect).toBe(false);
     });
 
+    it("should accept question with more than 5 options", () => {
+      const manyOptionsQuestion = {
+        options: Array.from({ length: 12 }, (_, i) => ({ label: `Option ${i + 1}` })),
+        prompt: "Pick one?",
+        title: "Many",
+        multiSelect: false,
+      };
+
+      expect(() => QuestionSchema.parse(manyOptionsQuestion)).not.toThrow();
+      const parsed = QuestionSchema.parse(manyOptionsQuestion);
+      expect(parsed.options).toHaveLength(12);
+    });
+
     it("should reject question with multiSelect omitted", () => {
       const defaultQuestion = {
         options: [{ label: "A" }, { label: "B" }],

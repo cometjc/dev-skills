@@ -42,7 +42,7 @@ The system SHALL validate incoming questions against the defined Zod schema befo
 #### Scenario: Valid Questions Accepted
 
 - **WHEN** an AI assistant calls the tool with 1-4 valid questions
-- **AND** each question has 2-4 options
+- **AND** each question has at least 2 options
 - **THEN** the tool SHALL accept the request and create a session
 
 #### Scenario: Empty Questions Rejected

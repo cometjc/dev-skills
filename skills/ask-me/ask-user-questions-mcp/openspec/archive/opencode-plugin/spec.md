@@ -40,7 +40,7 @@ The system SHALL define the tool with identical schema to the MCP server.
 - **WHEN** the tool is defined
 - **THEN** it SHALL use the same parameter schema as the MCP server:
   - `questions`: Array of 1-4 questions
-  - Each question: `prompt`, `title`, `options` (2-4), `multiSelect`
+  - Each question: `prompt`, `title`, `options` (2+), `multiSelect`
   - Each option: `label`, optional `description`
 
 #### Scenario: Tool Description

@@ -127,7 +127,7 @@ Sessions represent a single question-answer interaction:
 - **Single-select**: User picks ONE option (radio buttons)
 - **Multi-select**: User picks MULTIPLE options (checkboxes)
 - **Custom Input**: "Other" option always available for free-text answers
-- **Constraints**: 1-4 questions per call, 2-4 options per question
+- **Constraints**: 1-4 questions per call, 2+ options per question
 
 ### Response Format
 
@@ -147,7 +147,7 @@ Here are the user's answers:
 
 - **File Permissions**: Sessions created with 0o600 (owner read/write only)
 - **UUID Format**: Session IDs must be valid UUID v4
-- **Array Bounds**: 1-4 questions, 2-4 options (enforced by Zod schemas)
+- **Array Bounds**: 1-4 questions, 2+ options (enforced by Zod schemas)
 - **Title Length**: Question titles max 12 characters (UI constraint)
 - **Timeout**: Default infinite (0); configurable via sessionTimeout
 

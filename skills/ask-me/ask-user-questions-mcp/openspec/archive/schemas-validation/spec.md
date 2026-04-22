@@ -49,7 +49,7 @@ The system SHALL validate question objects with all required fields.
 - **THEN** it MUST have:
   - `prompt`: Non-empty string
   - `title`: Non-empty string (min 1 character)
-  - `options`: Array of 2-4 Option objects
+  - `options`: Array of 2+ Option objects
   - `multiSelect`: Boolean value
 
 #### Scenario: Title Validation
@@ -62,7 +62,7 @@ The system SHALL validate question objects with all required fields.
 
 - **WHEN** validating options array
 - **THEN** it MUST have minimum 2 options
-- **AND** maximum 4 options
+- **AND** no maximum option count
 
 #### Scenario: MultiSelect Required
 
@@ -121,7 +121,7 @@ The system SHALL include descriptive text for LLM consumption.
 - **THEN** it SHALL mention: "Very short label displayed as a chip/tag (max 12 chars)."
 
 - **WHEN** describing the `options` field
-- **THEN** it SHALL mention: "Must have 2-4 options. There should be no 'Other' option, that will be provided automatically."
+- **THEN** it SHALL mention: "Must have at least 2 options. There should be no 'Other' option, that will be provided automatically."
 
 - **WHEN** describing the `multiSelect` field
 - **THEN** it SHALL mention: "Set to true to allow the user to select multiple options. Default: false (single-select)"
@@ -201,7 +201,7 @@ AskUserQuestionsParametersSchema
     └── []: QuestionSchema
         ├── prompt: string
         ├── title: string (min 1)
-        ├── options: OptionSchema[] (min 2, max 4)
+        ├── options: OptionSchema[] (min 2)
         │   └── OptionSchema
         │       ├── label: string
         │       └── description: string (optional)
@@ -219,7 +219,7 @@ const OptionSchema = z.object({
 const QuestionSchema = z.object({
   prompt: z.string().describe("..."),
   title: z.string().min(1, "...").describe("..."),
-  options: z.array(OptionSchema).min(2).max(4).describe("..."),
+  options: z.array(OptionSchema).min(2).describe("..."),
   multiSelect: z.boolean().describe("..."),
 });
 

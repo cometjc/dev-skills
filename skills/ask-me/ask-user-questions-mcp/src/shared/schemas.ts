@@ -2,10 +2,9 @@ import { z } from "zod";
 
 /**
  * Default limits - can be overridden by config
- * These are the hard maximums enforced by the schema (config can only reduce, not increase)
+ * Question count has a hard maximum in schema; option count is intentionally unbounded.
  */
 export const SCHEMA_LIMITS = {
-  MAX_OPTIONS: 10,
   MAX_QUESTIONS: 10,
   MIN_OPTIONS: 2,
   MIN_QUESTIONS: 1,
@@ -15,7 +14,7 @@ export const SCHEMA_LIMITS = {
  * Default recommended limits (used when no config is provided)
  */
 export const DEFAULT_LIMITS = {
-  maxOptions: 5,
+  maxOptions: Number.POSITIVE_INFINITY,
   maxQuestions: 5,
   recommendedOptions: 4,
   recommendedQuestions: 4,
@@ -39,16 +38,23 @@ export const OptionSchema = z.object({
 
 /**
  * Create a QuestionSchema with configurable option limits
- * @param maxOptions - Maximum number of options allowed (default: 4, max: 10)
+ * @param maxOptions - Optional maximum number of options allowed; when omitted or infinite, options are unbounded.
  */
 export function createQuestionSchema(
   maxOptions: number = DEFAULT_LIMITS.maxOptions,
 ) {
-  // Clamp to valid range
-  const effectiveMax = Math.min(
-    Math.max(maxOptions, SCHEMA_LIMITS.MIN_OPTIONS),
-    SCHEMA_LIMITS.MAX_OPTIONS,
-  );
+  const hasMaxOptions = Number.isFinite(maxOptions);
+  const effectiveMax = hasMaxOptions
+    ? Math.max(Math.floor(maxOptions), SCHEMA_LIMITS.MIN_OPTIONS)
+    : undefined;
+
+  const optionsSchema = hasMaxOptions
+    ? z.array(OptionSchema).min(SCHEMA_LIMITS.MIN_OPTIONS).max(effectiveMax!)
+    : z.array(OptionSchema).min(SCHEMA_LIMITS.MIN_OPTIONS);
+
+  const optionsDescription = hasMaxOptions
+    ? `The available choices for this question. Must have ${SCHEMA_LIMITS.MIN_OPTIONS}-${effectiveMax} options. `
+    : `The available choices for this question. Must have at least ${SCHEMA_LIMITS.MIN_OPTIONS} options (no maximum). `;
 
   return z.object({
     prompt: z
@@ -70,15 +76,11 @@ export function createQuestionSchema(
           "Examples: 'Auth method', 'Library', 'Approach'. " +
           "This title appears in the interface to help users quickly identify questions.",
       ),
-    options: z
-      .array(OptionSchema)
-      .min(SCHEMA_LIMITS.MIN_OPTIONS)
-      .max(effectiveMax)
-      .describe(
-        `The available choices for this question. Must have ${SCHEMA_LIMITS.MIN_OPTIONS}-${effectiveMax} options. ` +
-          "Each option should be a distinct, mutually exclusive choice (unless multiSelect is enabled). " +
-          "There should be no 'Other' option, that will be provided automatically.",
-      ),
+    options: optionsSchema.describe(
+      optionsDescription +
+        "Each option should be a distinct, mutually exclusive choice (unless multiSelect is enabled). " +
+        "There should be no 'Other' option, that will be provided automatically.",
+    ),
     multiSelect: z
       .boolean()
       .describe(
@@ -91,7 +93,7 @@ export function createQuestionSchema(
 /**
  * Create a QuestionsSchema with configurable limits
  * @param maxQuestions - Maximum number of questions allowed (default: 4, max: 10)
- * @param maxOptions - Maximum number of options per question (default: 4, max: 10)
+ * @param maxOptions - Optional maximum number of options per question. When omitted or infinite, options are unbounded.
  */
 export function createQuestionsSchema(
   maxQuestions: number = DEFAULT_LIMITS.maxQuestions,
@@ -112,19 +114,22 @@ export function createQuestionsSchema(
 /**
  * Create the full parameters schema with configurable limits
  * @param maxQuestions - Maximum number of questions (default: 4, max: 10)
- * @param maxOptions - Maximum number of options per question (default: 4, max: 10)
+ * @param maxOptions - Optional maximum number of options per question. When omitted or infinite, options are unbounded.
  */
 export function createAskUserQuestionsParametersSchema(
   maxQuestions: number = DEFAULT_LIMITS.maxQuestions,
   maxOptions: number = DEFAULT_LIMITS.maxOptions,
 ) {
   const questionsSchema = createQuestionsSchema(maxQuestions, maxOptions);
+  const optionsCountText = Number.isFinite(maxOptions)
+    ? `${SCHEMA_LIMITS.MIN_OPTIONS}-${Math.max(Math.floor(maxOptions), SCHEMA_LIMITS.MIN_OPTIONS)}`
+    : `${SCHEMA_LIMITS.MIN_OPTIONS}+`;
 
   return z.object({
     questions: questionsSchema.describe(
       `Questions to ask the user (1-${maxQuestions} questions). ` +
         `Each question must include: prompt (full question text), title (short label, max 12 chars), ` +
-        `options (2-${maxOptions} choices with labels and descriptions), and multiSelect (boolean).`,
+        `options (${optionsCountText} choices with labels and descriptions), and multiSelect (boolean).`,
     ),
     nonBlocking: z.boolean().default(false).describe(
       "Set to true to submit questions without waiting for answers. The tool will return immediately with a session ID that can be used with get_answered_questions to fetch answers later. Default: false (blocking mode).",
