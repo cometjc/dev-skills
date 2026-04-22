@@ -120,7 +120,8 @@ During PLD execution, do not interrupt per lane. Interrupt only for:
 
 ## Worktree and Git Context Gates
 
-- Require `using-git-worktrees` before concurrent routes (`pld`, `dispatching-parallel-agents`).
+- Require `using-git-worktrees` before any repository-writing implementation route that should be isolated, including `pld`, `dispatching-parallel-agents`, `executing-plans`, and `systematic-debugging` when it will edit files.
+- Require `finishing-a-development-branch` after implementation is complete and tests pass, before the final integration/cleanup choice is presented or executed.
 - Subagents with assigned branch/worktree must run:
   - `scripts/ensure_git_context.sh --branch <expected_branch> --toplevel <expected_worktree_root>`
   - before first write and before commit
