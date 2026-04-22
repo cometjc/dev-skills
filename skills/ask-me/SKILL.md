@@ -29,10 +29,12 @@ Common triggers:
 ## Core Contract
 
 1. Default to blocking AUQ when the next step is on the critical path and no independent slice can continue.
-2. Persist session IDs and blocked slices for resumable execution.
-3. Poll answered state on execution triggers.
-4. Resume blocked slices when answers are available.
-5. Treat MCP tool descriptions and return payloads as runtime source of truth.
+2. For the same unresolved decision/question, the **first AUQ call MUST be** `nonBlocking: false`.
+3. If a blocking AUQ call times out, keep the existing `session_id` and resume via `get_answered_questions`; do not re-ask the same question as a new non-blocking AUQ call.
+4. Persist session IDs and blocked slices for resumable execution.
+5. Poll answered state on execution triggers.
+6. Resume blocked slices when answers are available.
+7. Treat MCP tool descriptions and return payloads as runtime source of truth.
 
 ## AUQ Question Rules
 
@@ -99,15 +101,16 @@ Use these templates as defaults and only customize labels/descriptions to the ta
 
 ## Return-Message Guided Flow
 
-1. If no independent work can continue without the answer, call `ask_user_questions` with `nonBlocking: false` (blocking).
-2. Use `nonBlocking: true` only when the decision can be deferred and independent slices can continue.
-3. For non-blocking flows, persist returned `session_id` with blocked work slices.
-4. Poll with `get_answered_questions(session_id, blocking: false)` on normal execution triggers.
-5. Branch by returned status:
+1. If no independent work can continue without the answer, call `ask_user_questions` with `nonBlocking: false` (blocking) on the first attempt.
+2. If that blocking call times out/errors, do not re-ask the same question as a new AUQ call and do not change question semantics.
+3. Keep the same `session_id` from the timed-out call and continue only independent work.
+4. Use `nonBlocking: true` directly only when the decision can be deferred and independent slices can continue.
+5. Poll with `get_answered_questions(session_id, blocking: false)` on normal execution triggers.
+6. Branch by returned status:
   - `pending`: continue independent slices.
   - `answered`: re-attach blocked slices and resume.
   - timeout/no answer: keep partial progress and retry later.
-6. Use `get_answered_questions(..., blocking: true)` only when waiting is explicitly required at that point.
+7. Use `get_answered_questions(..., blocking: true)` only when waiting is explicitly required at that point.
 
 ## Execution Guardrails
 
