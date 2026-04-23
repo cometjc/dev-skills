@@ -20,18 +20,26 @@ Agent 完成所有任務、準備宣告結束之前，強制透過 `ask-user-que
 
 **Before finishing all tasks, always call `ask_user_questions` (MCP: `ask-user-questions`) once, asking the user what to do next as a multiple-choice question.**
 
+⚠️ 不要先用一般文字訊息獨立總結任務狀態，再另外送出 `Next Action` AUQ。
+必須把「狀態總結」與「下一步提問」合併在同一次 AUQ 中，讓使用者看到問題時就已帶著足夠上下文。
+
 - `title`: `"Next Action"`（11 chars，符合 ≤12 限制）
-- `prompt`: `"接下來你希望我做什麼？"`
+- `prompt`: 必須包含簡短狀態摘要，再接下一步提問；例如先交代這次完成了什麼、是否有失敗或阻塞、目前還剩什麼風險，然後再問使用者下一步
 - `options`: 根據當前執行脈絡，動態生成 **至少 10 個**最相關的後續行動（建議 10 到 26）；推薦項置頂；以 AUQ 的選項結構呈現
+- `options` 內必須固定包含一個收尾選項：`將本輪選項做完後結束`
 - 推薦項優先規則：若偵測到有「未 commit 變更」，第一項推薦固定為
   - 使用 `git worktree` 時：`先 rebase 到 main，再 fast-forward 回主 worktree`
   - 非 `git worktree` 流程時：`commit 本次變更`
-- `multiSelect`: `true`（可多選 multiple choice）
+- `multiSelect`: `true`（預設即為可多選，除非未來有極特殊理由，不要改成單選）
 - `nonBlocking`: `false`（此問題位於關鍵路徑，沒有獨立 slice 可以繼續）
 
 ⚠️ 問題型態必須是 multiple choice（有 `options` 的題目）；不得改成開放式自由輸入題。
 
 ⚠️ 強制規則，不可跳過；不可用 Claude 內建 `AskUserQuestion` 取代 MCP；**不得手動加入 `Other` 選項**（AUQ 工具本身提供）。
+
+⚠️ 送出 AUQ 時，tool call 本身的描述/上下文也必須帶上狀態報告，不可只丟一句抽象的「下一步想做什麼？」。目標是讓 AUQ 問題本身就攜帶足夠前後文，而不是依賴前一則 assistant 訊息做補充。
+
+⚠️ `Next Action` AUQ 一律使用 `"nonBlocking": false`。這是收尾關鍵路徑，不可改成 `true` 後在背景等答案。
 
 ### 防止範例錨定（避免影響選項方向）
 
@@ -46,13 +54,20 @@ Agent 完成所有任務、準備宣告結束之前，強制透過 `ask-user-que
 
 ## 執行方式
 
-1. 完成當前所有任務後、宣告完成前，呼叫 MCP 工具 `mcp__ask-user-questions__ask_user_questions`。
-2. 依 AUQ 契約組裝 `questions`：1 題、`title` 短、推薦項置頂、無手動 `Other`。
-3. 等待回傳（blocking）後依使用者選擇決定下一步；若選擇「Other / elaborate」則讀取自訂輸入再路由。
+1. 完成當前所有任務後、宣告完成前，先整理 1 段短狀態摘要（已完成、未完成、失敗/阻塞、風險），再把這段摘要直接放進 AUQ 的 prompt 與 tool call 描述。
+2. 呼叫 MCP 工具 `mcp__ask-user-questions__ask_user_questions`，且明確傳入 `"nonBlocking": false`。
+3. 依 AUQ 契約組裝 `questions`：1 題、`title` 短、推薦項置頂、無手動 `Other`。
+   同時固定加入 `將本輪選項做完後結束` 這個收尾選項。
+4. 等待回傳（blocking）後依使用者選擇決定下一步；若選擇「Other / elaborate」則讀取自訂輸入再路由。
 
 ---
 
 ## 範例呼叫
+
+下例示範一個更完整的 Markdown prompt。重點不是文案本身，而是結構：
+- 先用 1-3 句摘要交代現況
+- 再用短清單列出已完成 / 殘留風險 / 阻塞
+- 最後才接 `接下來你希望我做什麼？`
 
 ```json
 {
@@ -60,7 +75,7 @@ Agent 完成所有任務、準備宣告結束之前，強制透過 `ask-user-que
   "questions": [
     {
       "title": "Next Action",
-      "prompt": "接下來你希望我做什麼？",
+      "prompt": "**目前狀態**\\n已完成：<一句摘要這次完成的主要工作>\\n\\n- 已驗證：<已通過的測試 / smoke check>\\n- 殘留風險：<若無則寫無>\\n- 阻塞：<若無則寫無>\\n\\n**Next Action**\\n接下來你希望我做什麼？",
       "multiSelect": true,
       "options": [
         {
@@ -102,12 +117,23 @@ Agent 完成所有任務、準備宣告結束之前，強制透過 `ask-user-que
         {
           "label": "J. <動態生成選項 10>",
           "description": "<符合當前完成度的收尾或交付選項>"
+        },
+        {
+          "label": "K. 將本輪選項做完後結束",
+          "description": "先把這次已選的後續動作完成，做完就收尾，不再額外延伸新工作。"
         }
       ]
     }
   ]
 }
 ```
+
+### Markdown Prompt 寫法建議
+
+- 可以使用粗體標題，例如 `**目前狀態**`、`**Next Action**`
+- 可以使用短清單列出 `已驗證`、`殘留風險`、`阻塞`
+- 避免長篇報告；狀態摘要通常控制在 3-6 行最合適
+- `prompt` 內的 Markdown 應該是為了提高可讀性，不是為了塞完整 changelog
 
 ---
 
@@ -118,5 +144,5 @@ Agent 完成所有任務、準備宣告結束之前，強制透過 `ask-user-que
 ## Completion Guardrail
 
 - 除非使用者明確要求「先結束/停止」，否則每次回覆結尾都要觸發一次 `Next Action` AUQ。
-- 不可在「已完成/已提交」後直接結束回覆；必須緊接 `Next Action`。
+- 不可在「已完成/已提交」後先發一段獨立狀態總結再結束；必須把狀態總結直接併入 `Next Action` AUQ。
 - 規則說明、除錯說明、澄清回覆同樣適用此規則。
