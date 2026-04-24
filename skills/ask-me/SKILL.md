@@ -33,8 +33,9 @@ Common triggers:
 3. If a blocking AUQ call times out, keep the existing `session_id` and resume via `get_answered_questions`; do not re-ask the same question as a new non-blocking AUQ call.
 4. Persist session IDs and blocked slices for resumable execution.
 5. Poll answered state on execution triggers.
-6. Resume blocked slices when answers are available.
+6. Resume blocked slices immediately when answers are available.
 7. Treat MCP tool descriptions and return payloads as runtime source of truth.
+8. If a blocking AUQ call returns a usable answer, treat that answer as the current turn's next instruction, not a future-turn suggestion.
 
 ## nonBlocking Decision Tree
 
@@ -119,9 +120,27 @@ Use these templates as defaults and only customize labels/descriptions to the ta
 5. Poll with `get_answered_questions(session_id, blocking: false)` on normal execution triggers.
 6. Branch by returned status:
   - `pending`: continue independent slices.
-  - `answered`: re-attach blocked slices and resume.
+  - `answered`: re-attach blocked slices and resume execution in the same turn whenever the answer is sufficient.
   - timeout/no answer: keep partial progress and retry later.
 7. Use `get_answered_questions(..., blocking: true)` only when waiting is explicitly required at that point.
+
+## Answer-Resume State Machine
+
+Treat AUQ as a control-flow boundary:
+
+1. detect blocked or risky decision
+2. ask via AUQ
+3. receive answer or session state
+4. translate answer into concrete task(s)
+5. execute those task(s) immediately unless a real blocker remains
+
+Do not stop at step 3 unless one of these is true:
+- answers conflict with each other
+- a required parameter is still missing
+- the user chose a pure stop/closeout action
+- tools, permissions, or external dependencies block safe execution
+
+If none of those apply, the correct behavior is to keep going in the same turn.
 
 ## Execution Guardrails
 
@@ -130,6 +149,15 @@ Use these templates as defaults and only customize labels/descriptions to the ta
 - Never add a manual `Other` option.
 - Use AUQ return payload fields as the only authority for state transitions.
 - After the user selects an option, use immediate-action wording in updates (e.g., "我現在就直接..."), not deferred phrasing like "我下一步就...".
+- After a blocking AUQ answer, do not emit a final response that only restates the chosen option; final output should describe work already performed or a concrete blocker.
+- Multi-select answers are executable backlog for the current turn, not a menu to summarize and defer.
+
+## Anti-Patterns
+
+- Asking AUQ, getting an answer, then ending with "I will do that next"
+- Treating `answered` as a note for the next turn instead of a resume signal
+- Re-asking the same question because the first blocking AUQ timed out
+- Converting a clear multi-select answer into vague "preference" language and stopping
 
 ## Do Integration
 

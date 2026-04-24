@@ -1,6 +1,6 @@
 ---
 name: always-ask-next
-description: Before declaring all tasks complete, always call ask-user-questions MCP (ask_user_questions) using a multiple-choice question with 10 dynamically generated next-action options. MANDATORY — no exceptions.
+description: Use when a task is about to be closed out and the agent must ask for the next action through AUQ, then continue in the same turn when the answer is actionable.
 metadata:
   {
     "origin": "https://github.com/endman100/skill-always-ask-next",
@@ -10,62 +10,49 @@ metadata:
 
 # Always Ask Next
 
-## 此 Skill 適用於
+## Overview
 
-Agent 完成所有任務、準備宣告結束之前，強制透過 `ask-user-questions` MCP 詢問使用者下一步，避免自行假設結束點或遺漏後續行動。
+在準備收尾前，強制透過 `ask-user-questions` MCP 問一次 `Next Action`。  
+這不是收尾問卷，而是下一段執行流程的入口：若 blocking AUQ 已回傳可執行答案，Agent 應在同回合直接做，不可停在摘要或「下一步我會...」。
 
 ---
 
-## 規則
+## Core Rules
 
 **Before finishing all tasks, always call `ask_user_questions` (MCP: `ask-user-questions`) once, asking the user what to do next as a multiple-choice question.**
 
-⚠️ 不要先用一般文字訊息獨立總結任務狀態，再另外送出 `Next Action` AUQ。
-必須把「狀態總結」與「下一步提問」合併在同一次 AUQ 中，讓使用者看到問題時就已帶著足夠上下文。
+- 不要先發一般文字總結，再另外送 `Next Action` AUQ；狀態摘要必須直接放進 AUQ prompt。
+- `title` 固定為 `"Next Action"`。
+- `prompt` 必須先給短狀態摘要，再問下一步。
+- `options` 至少 10 個，固定包含 `將本輪選項做完後結束`。
+- 推薦項置頂；若有未 commit 變更，推薦項優先規則是：
+  - `git worktree` 流程：`先 rebase 到 main，再 fast-forward 回主 worktree`
+  - 非 `git worktree` 流程：`commit 本次變更`
+- `multiSelect` 預設為 `true`。
+- `nonBlocking` 固定為 `false`。
+- 問題必須是 multiple choice；不得手動加入 `Other`。
+- tool call 本身也要帶上狀態上下文，不可只丟抽象問句。
 
-- `title`: `"Next Action"`（11 chars，符合 ≤12 限制）
-- `prompt`: 必須包含簡短狀態摘要，再接下一步提問；例如先交代這次完成了什麼、是否有失敗或阻塞、目前還剩什麼風險，然後再問使用者下一步
-- `options`: 根據當前執行脈絡，動態生成 **至少 10 個**最相關的後續行動（建議 10 到 26）；推薦項置頂；以 AUQ 的選項結構呈現
-- `options` 內必須固定包含一個收尾選項：`將本輪選項做完後結束`
-- 推薦項優先規則：若偵測到有「未 commit 變更」，第一項推薦固定為
-  - 使用 `git worktree` 時：`先 rebase 到 main，再 fast-forward 回主 worktree`
-  - 非 `git worktree` 流程時：`commit 本次變更`
-- `multiSelect`: `true`（預設即為可多選，除非未來有極特殊理由，不要改成單選）
-- `nonBlocking`: `false`（此問題位於關鍵路徑，沒有獨立 slice 可以繼續）
+## Control Flow
 
-⚠️ 問題型態必須是 multiple choice（有 `options` 的題目）；不得改成開放式自由輸入題。
+收到 blocking AUQ 的答案後，預設流程只有這一條：
 
-⚠️ 強制規則，不可跳過；不可用 Claude 內建 `AskUserQuestion` 取代 MCP；**不得手動加入 `Other` 選項**（AUQ 工具本身提供）。
+1. 問 `Next Action`
+2. 收到答案
+3. 把答案轉成本輪待辦
+4. 立即開始執行
+5. 做完全部已選項目或遇到明確阻塞後，才允許 final
 
-⚠️ 送出 AUQ 時，tool call 本身的描述/上下文也必須帶上狀態報告，不可只丟一句抽象的「下一步想做什麼？」。目標是讓 AUQ 問題本身就攜帶足夠前後文，而不是依賴前一則 assistant 訊息做補充。
+只有以下情況可不直接執行：
 
-⚠️ `Next Action` AUQ 一律使用 `"nonBlocking": false`。這是收尾關鍵路徑，不可改成 `true` 後在背景等答案。
+- 選項彼此衝突
+- 缺必要參數
+- 使用者選的是純收尾/停止
+- 工具、權限或外部依賴造成實質阻塞
 
-⚠️ **同回合延續執行是預設行為。**  
-當 `ask_user_questions(nonBlocking: false, ...)` 已成功回傳答案時，Agent **預設必須在同一輪立即開始執行使用者所選的後續動作**；不得只回覆「收到」或只做摘要後就停住，除非符合以下少數例外：
+若答案可直接執行，就視為「本輪仍在進行中」，不是下輪待辦。
 
-- 使用者選項彼此衝突，必須先再做一次 AUQ / clarify 才能安全決策
-- 使用者選的是純收尾選項（例如只要求結束、不再繼續執行）
-- 當前環境真的無法在本輪繼續（例如必要工具不可用、權限不足、或外部阻塞），且回覆中必須明講阻塞點
-
-⚠️ **多選題的預設解讀是「執行」而不是「參考」。**  
-若使用者在 `Next Action` 選了多個項目，Agent 應把它們視為本輪待辦，按合理順序直接開始做；不可把多選結果當成下輪候選清單後就結束。
-
-⚠️ **若答案已足夠明確，就不要再插入一則純確認訊息。**  
-拿到 blocking AUQ 的答案後，應直接執行；只有在答案之間互斥、缺必要參數、或存在高風險副作用時，才允許再補一次澄清。
-
-⚠️ **`Next Action` AUQ 不是收尾問卷，而是下一段執行流程的入口。**  
-送出 blocking AUQ 後，整個回合尚未結束；只有兩種情況可結束本回合：
-
-- 已依答案開始執行並完成這輪所選工作
-- 因明確阻塞而無法繼續，且已在同回合清楚交代阻塞點
-
-⚠️ **若 `ask_user_questions(nonBlocking: false, ...)` 已回傳答案，預設禁止直接輸出 final closeout 後結束。**  
-除非使用者選的是純收尾/停止，否則 final 回覆必須建立在「已實際做了答案指定的事」之上，而不是只描述打算去做。
-
-⚠️ **若本輪的 `Next Action` 已取得答案，且答案可直接執行，Agent 應把該答案視為「本輪仍在進行中」而非「下一輪待辦」。**
-
-### 防止範例錨定（避免影響選項方向）
+## Answer Mapping
 
 - 範例只示範「資料結構與格式」，**不得直接複製範例 label/description 語意**到實際提問。
 - 實際輸出的每個 label 都必須符合 A-Z 編號格式（例如 `A. ...`、`B. ...`），不可省略編號。
@@ -74,37 +61,7 @@ Agent 完成所有任務、準備宣告結束之前，強制透過 `ask-user-que
 - 若情境訊號不足，先用 AUQ 補問關鍵偏好，再產生下一步選項；不可用靜態範例硬套。
 - 範例中的 `<...>` 佔位符一律視為模板 token，不是預設內容。
 
----
-
-## 執行方式
-
-1. 完成當前所有任務後、宣告完成前，先整理 1 段短狀態摘要（已完成、未完成、失敗/阻塞、風險），再把這段摘要直接放進 AUQ 的 prompt 與 tool call 描述。
-2. 呼叫 MCP 工具 `mcp__ask-user-questions__ask_user_questions`，且明確傳入 `"nonBlocking": false`。
-3. 依 AUQ 契約組裝 `questions`：1 題、`title` 短、推薦項置頂、無手動 `Other`。
-   同時固定加入 `將本輪選項做完後結束` 這個收尾選項。
-4. 等待回傳（blocking）後，立即把答案轉成本輪待辦並開始執行；若為多選，按合理順序直接執行，不要先停在摘要。
-5. 只有在答案彼此衝突、缺必要資訊、或存在高風險副作用時，才再做一次 AUQ / clarify。
-6. 若選擇「Other / elaborate」則讀取自訂輸入再路由。
-
-### 強制流程（收到答案後）
-
-把這段當成強制控制流程，而不是建議：
-
-1. `ask_user_questions(nonBlocking: false, ...)`
-2. 收到答案
-3. 解析出本輪待辦
-4. 立即開始執行第一個待辦
-5. 完成後繼續執行同輪其餘已選項目
-6. 只有在全部已選項目完成，或遇到明確阻塞時，才允許進入 final 回覆
-
-禁止替代流程：
-
-- 收到答案後先發一則「我接下來會...」
-- 收到答案後只做摘要，不動手
-- 把答案視為下輪計畫而不是本輪指令
-- 先 final，再把真正執行留到下一輪
-
-### 答案轉待辦規則
+答案轉待辦規則：
 
 - 單選：直接把該選項視為本輪唯一待辦，立即執行。
 - 多選：依「會改狀態的實作 -> 驗證/測試 -> 說明/展示 -> commit/收尾」的順序執行。
@@ -112,18 +69,7 @@ Agent 完成所有任務、準備宣告結束之前，強制透過 `ask-user-que
 - 若同時有 `commit 本次變更` 與實作/測試：先完成實作與驗證，再 commit。
 - 若有單一選項其實只是「檢視/列出/規劃」且使用者明確選了它，也要在同輪實際產出結果，不可只回覆會去整理。
 
-### 同回合執行優先順序
-
-- 若使用者多選且包含「實作 / 驗證 / commit / 說明」等混合項目，預設順序是：
-  1. 先做會改變工作樹或系統狀態的項目
-  2. 再做驗證與測試
-  3. 再做展示、摘要、commit message 等說明性項目
-  4. 若也選了 `commit 本次變更`，則在相關實作與驗證完成後再 commit
-- 若使用者同時選了 `將本輪選項做完後結束`，表示「把這輪選中的項目全部做完即可收尾」，不是要求先停住。
-
-### 反模式
-
-以下都視為違反本 Skill 目的：
+## Anti-Patterns
 
 - AUQ 回答回來後，只回「收到，我接下來會...」但沒有在同輪開始做
 - 把多選答案改寫成「我理解你的偏好是...」後直接結束
@@ -133,7 +79,7 @@ Agent 完成所有任務、準備宣告結束之前，強制透過 `ask-user-que
 - final 訊息只報告使用者選了什麼，卻沒有證據顯示已實際執行
 - 使用者已選 `開 rebuild branch`，但回覆停在「下一步我會開 branch」
 
-### 自我檢查清單
+## Self-Check
 
 送出 final 前，至少快速檢查一次：
 
